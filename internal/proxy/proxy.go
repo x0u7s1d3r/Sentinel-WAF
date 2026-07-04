@@ -17,6 +17,7 @@ import (
 
 	"sentinel-waf/internal/config"
 	"sentinel-waf/internal/detector"
+	"sentinel-waf/internal/notifier"
 	"sentinel-waf/internal/parser"
 	"sentinel-waf/internal/storage"
 )
@@ -31,17 +32,18 @@ type Stats struct {
 
 // Gateway encapsule le reverse proxy et la logique WAF.
 type Gateway struct {
-	cfg    config.Config
-	chain  *detector.Chain
-	rp     *httputil.ReverseProxy // upstream par défaut (repli)
-	router *Router                // routage multi-application par domaine
-	log    *slog.Logger
-	store  *storage.Store // peut être nil : le WAF fonctionne sans persistance
-	Stats  Stats
+	cfg      config.Config
+	chain    *detector.Chain
+	rp       *httputil.ReverseProxy // upstream par défaut (repli)
+	router   *Router                // routage multi-application par domaine
+	log      *slog.Logger
+	store    *storage.Store  // peut être nil : le WAF fonctionne sans persistance
+	notifier *notifier.Slack // peut être nil : le WAF fonctionne sans alertes
+	Stats    Stats
 }
 
-// New construit la passerelle. store peut être nil (aucune persistance).
-func New(cfg config.Config, chain *detector.Chain, log *slog.Logger, store *storage.Store, router *Router) (*Gateway, error) {
+// New construit la passerelle. store et notif peuvent être nil.
+func New(cfg config.Config, chain *detector.Chain, log *slog.Logger, store *storage.Store, router *Router, notif *notifier.Slack) (*Gateway, error) {
 	target, err := url.Parse(cfg.Upstream)
 	if err != nil {
 		return nil, err
@@ -54,7 +56,7 @@ func New(cfg config.Config, chain *detector.Chain, log *slog.Logger, store *stor
 	if router == nil {
 		router = NewRouter()
 	}
-	return &Gateway{cfg: cfg, chain: chain, rp: rp, router: router, log: log, store: store}, nil
+	return &Gateway{cfg: cfg, chain: chain, rp: rp, router: router, log: log, store: store, notifier: notif}, nil
 }
 
 // ServeHTTP implémente http.Handler : c'est le pipeline WAF complet.
@@ -107,6 +109,16 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Findings:   result.Findings,
 		LatencyUS:  latency,
 	})
+
+	// Alerte Slack (agrégée, non bloquante) dès qu'une attaque est traitée.
+	if verdict != "allowed" {
+		g.notifier.Notify(notifier.Alert{
+			ClientIP:   clientIP(r),
+			Path:       req.Path,
+			Verdict:    verdict,
+			Categories: result.Categories,
+		})
+	}
 
 	switch verdict {
 	case "blocked":

@@ -22,6 +22,9 @@ type Config struct {
 	// DSN PostgreSQL, ex. "postgres://user:pass@host:5432/db?sslmode=disable"
 	// Vide = pas de persistance (le WAF fonctionne quand même).
 	Database string `json:"database"`
+	// Webhook Slack pour les alertes. SECRET : à fournir par l'environnement
+	// (SENTINEL_SLACK_WEBHOOK), jamais en dur dans un fichier versionné.
+	SlackWebhook string `json:"-"`
 }
 
 // Default fournit une configuration raisonnable si aucun fichier n'est fourni.
@@ -77,5 +80,8 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("SENTINEL_DB_URL"); v != "" {
 		cfg.Database = v
+	}
+	if v := os.Getenv("SENTINEL_SLACK_WEBHOOK"); v != "" {
+		cfg.SlackWebhook = v
 	}
 }

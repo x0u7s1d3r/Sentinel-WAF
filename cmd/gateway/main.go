@@ -20,6 +20,7 @@ import (
 
 	"sentinel-waf/internal/config"
 	"sentinel-waf/internal/detector"
+	"sentinel-waf/internal/notifier"
 	"sentinel-waf/internal/proxy"
 	"sentinel-waf/internal/storage"
 )
@@ -55,6 +56,20 @@ func main() {
 		detector.NewHeuristics(),
 	)
 
+	// Alertes Slack (facultatif) : actives seulement si un webhook est fourni
+	// par l'environnement. Intervalle d'agrégation réglable (défaut 15 s).
+	alertInterval := 15 * time.Second
+	if v := os.Getenv("SENTINEL_ALERT_INTERVAL_SEC"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			alertInterval = time.Duration(n) * time.Second
+		}
+	}
+	notif := notifier.NewSlack(cfg.SlackWebhook, alertInterval, log)
+	if notif != nil {
+		log.Info("alertes Slack activées", "intervalle", alertInterval)
+		defer notif.Close()
+	}
+
 	// Routeur multi-application : chargé depuis la base, rechargé à chaud.
 	router := proxy.NewRouter()
 	reloadRouter(store, router, log)
@@ -62,7 +77,7 @@ func main() {
 		go refreshLoop(store, router, log) // capte les changements externes
 	}
 
-	gw, err := proxy.New(cfg, chain, log, store, router)
+	gw, err := proxy.New(cfg, chain, log, store, router, notif)
 	if err != nil {
 		log.Error("initialisation passerelle", "err", err)
 		os.Exit(1)
