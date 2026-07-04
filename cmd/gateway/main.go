@@ -29,11 +29,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Chaîne de détection. Pour l'instant : moteur sémantique SQL.
-	// Les prochains moteurs (XSS sémantique, heuristiques traversée/commande/
-	// SSRF/NoSQL/scanner) s'ajoutent ici, sans toucher au reste.
+	// Chaîne de détection. Moteurs sémantiques (SQL, XSS) + couche heuristique
+	// (traversée, commande, SSRF, NoSQL, scanner). Ajouter une protection =
+	// ajouter un moteur ici, sans toucher au proxy ni au parser.
 	chain := detector.NewChain(
 		detector.SQLSemantic{},
+		detector.XSSSemantic{},
+		detector.NewHeuristics(),
 	)
 
 	gw, err := proxy.New(cfg, chain, log)

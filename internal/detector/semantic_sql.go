@@ -350,10 +350,10 @@ func analyzeOnce(text string) []Finding {
 	return res
 }
 
-// Inspect fait l'analyse multi-contexte (comme libinjection) et renvoie
-// l'interprétation la plus suspecte : telle quelle, ou comme si l'entrée
-// était déjà à l'intérieur d'une chaîne '...' ou "...".
-func (SQLSemantic) Inspect(value string) []Finding {
+// scanSQL fait l'analyse multi-contexte (comme libinjection) d'UNE valeur et
+// renvoie l'interprétation la plus suspecte : telle quelle, ou comme si
+// l'entrée était déjà à l'intérieur d'une chaîne '...' ou "...".
+func scanSQL(value string) []Finding {
 	if value == "" {
 		return nil
 	}
@@ -371,6 +371,15 @@ func (SQLSemantic) Inspect(value string) []Finding {
 		}
 	}
 	return best
+}
+
+// Inspect applique l'analyse SQL à toutes les valeurs de la requête.
+func (SQLSemantic) Inspect(req Request) []Finding {
+	var out []Finding
+	for _, v := range req.Values {
+		out = append(out, scanSQL(v)...)
+	}
+	return out
 }
 
 // ---- petites aides (évitent toute dépendance externe) ----

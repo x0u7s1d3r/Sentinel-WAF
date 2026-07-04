@@ -28,8 +28,8 @@ de blocage dépend d'un score cumulé et d'un seuil, pas d'un match unique.
    ┌───────▼────────┐
    │ Detection Chain│  agrège les moteurs, calcule le score
    │  ├ semantic-sql│  ← implémenté (tokeniseur multi-contexte)
-   │  ├ semantic-xss│  ← à venir
-   │  └ heuristics  │  ← à venir (traversée, cmd, SSRF, NoSQL, scanner)
+   │  ├ semantic-xss│  ← implémenté (analyse structurelle HTML/JS)
+   │  └ heuristics  │  ← implémenté (traversée, cmd, SSRF, NoSQL, scanner)
    └───────┬────────┘
            │  Result {findings, categories, score}
    ┌───────▼────────┐
@@ -47,7 +47,7 @@ de blocage dépend d'un score cumulé et d'un seuil, pas d'un match unique.
 | `cmd/gateway` | binaire de la passerelle, supervision `/_sentinel/*` | ✅ |
 | `internal/proxy` | reverse proxy + pipeline WAF (point d'accroche des moteurs) | ✅ |
 | `internal/parser` | normalisation HTTP → `Request` (décodage, extraction) | ✅ |
-| `internal/detector` | interface `Detector`, `Chain`, moteur sémantique SQL | ✅ |
+| `internal/detector` | `Detector`/`Chain` + moteurs : SQL & XSS sémantiques, heuristiques (traversée, cmd, SSRF, NoSQL, scanner) | ✅ |
 | `internal/config` | configuration JSON (listen, upstream, mode, seuil) | ✅ |
 | `internal/logger` | journalisation structurée (slog) | intégré |
 | couche stockage | PostgreSQL (événements), Redis (rate limit/cache) | 🔜 |

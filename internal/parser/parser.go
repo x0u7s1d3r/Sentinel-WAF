@@ -38,8 +38,16 @@ func Parse(r *http.Request) (detector.Request, []byte) {
 
 // extractValues collecte les valeurs (et clés) des paramètres de query et du
 // corps urlencodé ; sinon le corps brut (JSON, etc.).
+//
+// On ajoute TOUJOURS la query brute décodée dans son ensemble : Go abandonne
+// silencieusement un paramètre dont la valeur contient un ';' (séparateur des
+// injections de commande). Inspecter la query complète ferme cet angle mort.
 func extractValues(u *url.URL, body string) []string {
 	var vals []string
+
+	if u.RawQuery != "" {
+		vals = append(vals, decode(u.RawQuery))
+	}
 
 	for k, list := range u.Query() {
 		vals = append(vals, decode(k))

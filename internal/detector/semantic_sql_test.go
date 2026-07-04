@@ -11,7 +11,6 @@ func score(fs []Finding) int {
 }
 
 func TestSQLSemantic_Attacks(t *testing.T) {
-	eng := SQLSemantic{}
 	attacks := []string{
 		"1' OR '1'='1",
 		"admin' OR '1'='1' --",
@@ -28,14 +27,13 @@ func TestSQLSemantic_Attacks(t *testing.T) {
 		"') OR ('1'='1",
 	}
 	for _, a := range attacks {
-		if score(eng.Inspect(a)) == 0 {
+		if score(scanSQL(a)) == 0 {
 			t.Errorf("ATTAQUE NON DÉTECTÉE: %q", a)
 		}
 	}
 }
 
 func TestSQLSemantic_Benign(t *testing.T) {
-	eng := SQLSemantic{}
 	benign := []string{
 		"2",
 		"Blue Cotton T-Shirt",
@@ -50,7 +48,7 @@ func TestSQLSemantic_Benign(t *testing.T) {
 		"SELECT the best option for me",
 	}
 	for _, b := range benign {
-		if s := score(eng.Inspect(b)); s != 0 {
+		if s := score(scanSQL(b)); s != 0 {
 			t.Errorf("FAUX POSITIF sur %q (score=%d)", b, s)
 		}
 	}

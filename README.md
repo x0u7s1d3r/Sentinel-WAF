@@ -98,7 +98,7 @@ go test ./...        # inclut la batterie du moteur sémantique SQL
 | Version | Contenu | État |
 |---------|---------|------|
 | v0.1 | Passerelle Go, moteur sémantique SQL, supervision | ✅ |
-| v0.2 | XSS sémantique + heuristiques (traversée, cmd, SSRF, NoSQL, scanner), PostgreSQL, Redis | 🔜 |
+| v0.2 | ✅ XSS sémantique + heuristiques (traversée, cmd, SSRF, NoSQL, scanner) — reste : PostgreSQL, Redis | 🚧 |
 | v0.3 | Dashboard React (accueil PME + onglet technique) | 🔜 |
 | v0.4 | Mode apprentissage (réduction des faux positifs) | 🔜 |
 | v0.5 | Intégration SOAR (Shuffle / TheHive / Elastic) | 🔜 |

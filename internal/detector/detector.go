@@ -38,12 +38,12 @@ type Result struct {
 type Detector interface {
 	// Name identifie le moteur (pour les logs/plugins).
 	Name() string
-	// Inspect analyse une valeur et renvoie les détections trouvées.
-	Inspect(value string) []Finding
+	// Inspect analyse la requête normalisée et renvoie les détections.
+	Inspect(req Request) []Finding
 }
 
-// Chain exécute plusieurs détecteurs sur toutes les valeurs d'une requête
-// et agrège le résultat (findings dédoublonnés par ID, score cumulé).
+// Chain exécute plusieurs détecteurs sur une requête et agrège le résultat
+// (findings dédoublonnés par ID, score cumulé, catégories).
 type Chain struct {
 	detectors []Detector
 }
@@ -57,11 +57,9 @@ func NewChain(d ...Detector) *Chain {
 func (c *Chain) Inspect(req Request) Result {
 	seen := map[string]Finding{}
 	for _, det := range c.detectors {
-		for _, val := range req.Values {
-			for _, f := range det.Inspect(val) {
-				if _, ok := seen[f.ID]; !ok {
-					seen[f.ID] = f
-				}
+		for _, f := range det.Inspect(req) {
+			if _, ok := seen[f.ID]; !ok {
+				seen[f.ID] = f
 			}
 		}
 	}
