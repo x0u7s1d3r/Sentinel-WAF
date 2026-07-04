@@ -11,10 +11,12 @@ services:
     ports:
       - "8080:8080"
     environment:
-      # surcharge possible de l'upstream sans reconstruire l'image
+      # surcharge possible sans reconstruire l'image
       - SENTINEL_UPSTREAM=http://demo-target:80
+      - SENTINEL_DB_URL=postgres://sentinel:change_me@postgres:5432/sentinel?sslmode=disable
     depends_on:
       - demo-target
+      - postgres
     restart: unless-stopped
 
   # Backend de démonstration (renvoie les infos de la requête reçue).

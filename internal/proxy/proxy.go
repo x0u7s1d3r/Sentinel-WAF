@@ -18,6 +18,7 @@ import (
 	"sentinel-waf/internal/config"
 	"sentinel-waf/internal/detector"
 	"sentinel-waf/internal/parser"
+	"sentinel-waf/internal/storage"
 )
 
 // Stats compteurs simples exposés par la passerelle (thread-safe).
@@ -34,11 +35,12 @@ type Gateway struct {
 	chain *detector.Chain
 	rp    *httputil.ReverseProxy
 	log   *slog.Logger
+	store *storage.Store // peut être nil : le WAF fonctionne sans persistance
 	Stats Stats
 }
 
-// New construit la passerelle à partir de la config et de la chaîne de moteurs.
-func New(cfg config.Config, chain *detector.Chain, log *slog.Logger) (*Gateway, error) {
+// New construit la passerelle. store peut être nil (aucune persistance).
+func New(cfg config.Config, chain *detector.Chain, log *slog.Logger, store *storage.Store) (*Gateway, error) {
 	target, err := url.Parse(cfg.Upstream)
 	if err != nil {
 		return nil, err
@@ -48,7 +50,7 @@ func New(cfg config.Config, chain *detector.Chain, log *slog.Logger) (*Gateway, 
 		http.Error(w, "Backend injoignable (démarrez l'application protégée).",
 			http.StatusBadGateway)
 	}
-	return &Gateway{cfg: cfg, chain: chain, rp: rp, log: log}, nil
+	return &Gateway{cfg: cfg, chain: chain, rp: rp, log: log, store: store}, nil
 }
 
 // ServeHTTP implémente http.Handler : c'est le pipeline WAF complet.
@@ -63,6 +65,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	result := g.chain.Inspect(req)
 	verdict := g.decide(result.Score)
+	latency := time.Since(start).Microseconds()
 
 	g.log.Info("request",
 		"ip", clientIP(r),
@@ -72,8 +75,20 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"score", result.Score,
 		"categories", strings.Join(result.Categories, ","),
 		"engines", enginesOf(result.Findings),
-		"latency_us", time.Since(start).Microseconds(),
+		"latency_us", latency,
 	)
+
+	// Persistance asynchrone (ne bloque jamais le trafic ; ignorée si store nil).
+	g.store.Log(storage.Event{
+		ClientIP:   clientIP(r),
+		Method:     req.Method,
+		Path:       req.Path,
+		Verdict:    verdict,
+		Score:      result.Score,
+		Categories: result.Categories,
+		Findings:   result.Findings,
+		LatencyUS:  latency,
+	})
 
 	switch verdict {
 	case "blocked":

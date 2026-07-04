@@ -7,6 +7,7 @@ package config
 import (
 	"encoding/json"
 	"os"
+	"strconv"
 )
 
 type Config struct {
@@ -18,6 +19,9 @@ type Config struct {
 	Mode string `json:"mode"`
 	// Score à partir duquel une requête est bloquée (mode block)
 	Threshold int `json:"threshold"`
+	// DSN PostgreSQL, ex. "postgres://user:pass@host:5432/db?sslmode=disable"
+	// Vide = pas de persistance (le WAF fonctionne quand même).
+	Database string `json:"database"`
 }
 
 // Default fournit une configuration raisonnable si aucun fichier n'est fourni.
@@ -30,22 +34,22 @@ func Default() Config {
 	}
 }
 
-// Load lit un fichier JSON ; en cas d'absence, renvoie la config par défaut.
+// Load lit un fichier JSON puis applique les surcharges d'environnement.
+// En l'absence de fichier, part de la config par défaut.
 func Load(path string) (Config, error) {
 	cfg := Default()
-	if path == "" {
-		return cfg, nil
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return cfg, nil
+	if path != "" {
+		data, err := os.ReadFile(path)
+		switch {
+		case err == nil:
+			if err := json.Unmarshal(data, &cfg); err != nil {
+				return cfg, err
+			}
+		case !os.IsNotExist(err):
+			return cfg, err
 		}
-		return cfg, err
 	}
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return cfg, err
-	}
+	applyEnv(&cfg)
 	if cfg.Threshold <= 0 {
 		cfg.Threshold = 4
 	}
@@ -53,4 +57,25 @@ func Load(path string) (Config, error) {
 		cfg.Mode = "block"
 	}
 	return cfg, nil
+}
+
+// applyEnv permet de surcharger la config sans reconstruire l'image (Docker).
+func applyEnv(cfg *Config) {
+	if v := os.Getenv("SENTINEL_LISTEN"); v != "" {
+		cfg.Listen = v
+	}
+	if v := os.Getenv("SENTINEL_UPSTREAM"); v != "" {
+		cfg.Upstream = v
+	}
+	if v := os.Getenv("SENTINEL_MODE"); v != "" {
+		cfg.Mode = v
+	}
+	if v := os.Getenv("SENTINEL_THRESHOLD"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.Threshold = n
+		}
+	}
+	if v := os.Getenv("SENTINEL_DB_URL"); v != "" {
+		cfg.Database = v
+	}
 }

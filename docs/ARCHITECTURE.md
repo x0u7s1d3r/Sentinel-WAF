@@ -50,7 +50,8 @@ de blocage dépend d'un score cumulé et d'un seuil, pas d'un match unique.
 | `internal/detector` | `Detector`/`Chain` + moteurs : SQL & XSS sémantiques, heuristiques (traversée, cmd, SSRF, NoSQL, scanner) | ✅ |
 | `internal/config` | configuration JSON (listen, upstream, mode, seuil) | ✅ |
 | `internal/logger` | journalisation structurée (slog) | intégré |
-| couche stockage | PostgreSQL (événements), Redis (rate limit/cache) | 🔜 |
+| `internal/storage` | persistance PostgreSQL des événements (écriture asynchrone, dégradation gracieuse) | ✅ |
+| Redis (rate limit/cache) | à venir | 🔜 |
 | dashboard `web/` | accueil PME + onglet technique (React) | 🔜 |
 
 ## Contrat de détection
