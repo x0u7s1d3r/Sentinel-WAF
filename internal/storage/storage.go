@@ -57,11 +57,14 @@ CREATE INDEX IF NOT EXISTS events_ts_idx ON events (ts DESC);
 CREATE TABLE IF NOT EXISTS applications (
     id           BIGSERIAL PRIMARY KEY,
     name         TEXT NOT NULL,
+    domain       TEXT NOT NULL DEFAULT '',
     upstream_url TEXT NOT NULL,
     mode         TEXT NOT NULL DEFAULT 'block',
     threshold    INT  NOT NULL DEFAULT 4,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- pour les bases créées avant l'ajout du routage par domaine
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS domain TEXT NOT NULL DEFAULT '';
 `
 
 // Open établit la connexion, vérifie qu'elle répond et applique le schéma.
@@ -188,6 +191,60 @@ func (s *Store) Close() error {
 	close(s.quit)
 	time.Sleep(100 * time.Millisecond) // laisse la vidange se terminer
 	return s.db.Close()
+}
+
+// App est une application protégée par le WAF (une cible en amont).
+type App struct {
+	ID          int64     `json:"id"`
+	Name        string    `json:"name"`
+	Domain      string    `json:"domain"`       // hôte à router, ex. "app.exemple.tg"
+	UpstreamURL string    `json:"upstream_url"` // backend réel, ex. "http://127.0.0.1:9001"
+	Mode        string    `json:"mode"`         // "block" | "detect" (propre à l'appli)
+	Threshold   int       `json:"threshold"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// ListApps renvoie toutes les applications enregistrées.
+func (s *Store) ListApps() ([]App, error) {
+	rows, err := s.db.Query(
+		`SELECT id, name, domain, upstream_url, mode, threshold, created_at
+		 FROM applications ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []App
+	for rows.Next() {
+		var a App
+		if err := rows.Scan(&a.ID, &a.Name, &a.Domain, &a.UpstreamURL,
+			&a.Mode, &a.Threshold, &a.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// AddApp enregistre une nouvelle application et renvoie sa version complète.
+func (s *Store) AddApp(a App) (App, error) {
+	if a.Mode == "" {
+		a.Mode = "block"
+	}
+	if a.Threshold <= 0 {
+		a.Threshold = 4
+	}
+	err := s.db.QueryRow(
+		`INSERT INTO applications (name, domain, upstream_url, mode, threshold)
+		 VALUES ($1,$2,$3,$4,$5) RETURNING id, created_at`,
+		a.Name, a.Domain, a.UpstreamURL, a.Mode, a.Threshold,
+	).Scan(&a.ID, &a.CreatedAt)
+	return a, err
+}
+
+// DeleteApp supprime une application par son identifiant.
+func (s *Store) DeleteApp(id int64) error {
+	_, err := s.db.Exec(`DELETE FROM applications WHERE id = $1`, id)
+	return err
 }
 
 func splitComma(s string) []string {

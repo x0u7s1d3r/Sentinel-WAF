@@ -31,16 +31,17 @@ type Stats struct {
 
 // Gateway encapsule le reverse proxy et la logique WAF.
 type Gateway struct {
-	cfg   config.Config
-	chain *detector.Chain
-	rp    *httputil.ReverseProxy
-	log   *slog.Logger
-	store *storage.Store // peut être nil : le WAF fonctionne sans persistance
-	Stats Stats
+	cfg    config.Config
+	chain  *detector.Chain
+	rp     *httputil.ReverseProxy // upstream par défaut (repli)
+	router *Router                // routage multi-application par domaine
+	log    *slog.Logger
+	store  *storage.Store // peut être nil : le WAF fonctionne sans persistance
+	Stats  Stats
 }
 
 // New construit la passerelle. store peut être nil (aucune persistance).
-func New(cfg config.Config, chain *detector.Chain, log *slog.Logger, store *storage.Store) (*Gateway, error) {
+func New(cfg config.Config, chain *detector.Chain, log *slog.Logger, store *storage.Store, router *Router) (*Gateway, error) {
 	target, err := url.Parse(cfg.Upstream)
 	if err != nil {
 		return nil, err
@@ -50,7 +51,10 @@ func New(cfg config.Config, chain *detector.Chain, log *slog.Logger, store *stor
 		http.Error(w, "Backend injoignable (démarrez l'application protégée).",
 			http.StatusBadGateway)
 	}
-	return &Gateway{cfg: cfg, chain: chain, rp: rp, log: log, store: store}, nil
+	if router == nil {
+		router = NewRouter()
+	}
+	return &Gateway{cfg: cfg, chain: chain, rp: rp, router: router, log: log, store: store}, nil
 }
 
 // ServeHTTP implémente http.Handler : c'est le pipeline WAF complet.
@@ -63,11 +67,25 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	r.ContentLength = int64(len(body))
 
+	// Routage : quelle application est visée ? (par l'en-tête Host)
+	// Si une application correspond, on applique SA politique (mode + seuil) et
+	// on transmet à SON backend. Sinon, repli sur l'upstream par défaut.
+	mode, threshold := g.cfg.Mode, g.cfg.Threshold
+	upstream := g.rp
+	appName := "default"
+	if t, ok := g.router.Match(r.Host); ok {
+		mode, threshold = t.App.Mode, t.App.Threshold
+		upstream = t.rp
+		appName = t.App.Name
+	}
+
 	result := g.chain.Inspect(req)
-	verdict := g.decide(result.Score)
+	verdict := g.decide(result.Score, mode, threshold)
 	latency := time.Since(start).Microseconds()
 
 	g.log.Info("request",
+		"app", appName,
+		"host", r.Host,
 		"ip", clientIP(r),
 		"method", req.Method,
 		"path", req.Path,
@@ -96,18 +114,18 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		g.writeBlock(w, result)
 	case "detected":
 		g.Stats.Detected.Add(1)
-		g.rp.ServeHTTP(w, r)
+		upstream.ServeHTTP(w, r)
 	default:
 		g.Stats.Allowed.Add(1)
-		g.rp.ServeHTTP(w, r)
+		upstream.ServeHTTP(w, r)
 	}
 }
 
-func (g *Gateway) decide(score int) string {
-	if score < g.cfg.Threshold {
+func (g *Gateway) decide(score int, mode string, threshold int) string {
+	if score < threshold {
 		return "allowed"
 	}
-	if g.cfg.Mode == "block" {
+	if mode == "block" {
 		return "blocked"
 	}
 	return "detected"

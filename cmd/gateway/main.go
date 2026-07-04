@@ -1,8 +1,9 @@
 // Commande gateway : la passerelle Sentinel WAF.
 //
 // Elle écoute le trafic entrant, l'inspecte via la chaîne de moteurs de
-// détection, journalise l'événement (PostgreSQL si configuré), puis bloque ou
-// transmet au backend protégé. Endpoints de supervision sous /_sentinel/.
+// détection, journalise l'événement (PostgreSQL si configuré), route vers la
+// bonne application (par domaine) puis bloque ou transmet. Endpoints de
+// supervision et de gestion sous /_sentinel/.
 package main
 
 import (
@@ -13,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -34,14 +36,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Persistance : on tente d'ouvrir la base si un DSN est fourni. Si elle
-	// n'est pas joignable, le WAF démarre quand même (sans persistance) —
-	// la protection ne dépend jamais de la base.
+	// Persistance : le WAF démarre même si la base est indisponible.
 	var store *storage.Store
 	if cfg.Database != "" {
 		store = openStoreWithRetry(cfg.Database, log)
 	} else {
-		log.Info("aucune base configurée : persistance désactivée")
+		log.Info("aucune base configurée : persistance et multi-app désactivés")
 	}
 	defer func() {
 		if store != nil {
@@ -49,14 +49,20 @@ func main() {
 		}
 	}()
 
-	// Chaîne de détection : moteurs sémantiques (SQL, XSS) + heuristiques.
 	chain := detector.NewChain(
 		detector.SQLSemantic{},
 		detector.XSSSemantic{},
 		detector.NewHeuristics(),
 	)
 
-	gw, err := proxy.New(cfg, chain, log, store)
+	// Routeur multi-application : chargé depuis la base, rechargé à chaud.
+	router := proxy.NewRouter()
+	reloadRouter(store, router, log)
+	if store != nil {
+		go refreshLoop(store, router, log) // capte les changements externes
+	}
+
+	gw, err := proxy.New(cfg, chain, log, store, router)
 	if err != nil {
 		log.Error("initialisation passerelle", "err", err)
 		os.Exit(1)
@@ -65,7 +71,8 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/_sentinel/health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{
-			"status": "ok", "mode": cfg.Mode, "persistence": store != nil,
+			"status": "ok", "mode": cfg.Mode,
+			"persistence": store != nil, "apps": router.Count(),
 		})
 	})
 	mux.HandleFunc("/_sentinel/stats", func(w http.ResponseWriter, r *http.Request) {
@@ -94,14 +101,66 @@ func main() {
 		}
 		writeJSON(w, map[string]any{"events": events})
 	})
+
+	// --- Gestion des applications surveillées (multi-app) ---
+	mux.HandleFunc("/_sentinel/apps", func(w http.ResponseWriter, r *http.Request) {
+		if store == nil {
+			http.Error(w, "multi-app indisponible : configurez une base de données", http.StatusServiceUnavailable)
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			apps, err := store.ListApps()
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			writeJSON(w, map[string]any{"apps": apps})
+
+		case http.MethodPost:
+			var a storage.App
+			if err := json.NewDecoder(r.Body).Decode(&a); err != nil {
+				http.Error(w, "corps JSON invalide", http.StatusBadRequest)
+				return
+			}
+			if a.Name == "" || a.Domain == "" || a.UpstreamURL == "" {
+				http.Error(w, "name, domain et upstream_url sont requis", http.StatusBadRequest)
+				return
+			}
+			created, err := store.AddApp(a)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			reloadRouter(store, router, log)
+			w.WriteHeader(http.StatusCreated)
+			writeJSON(w, created)
+
+		case http.MethodDelete:
+			id, err := strconv.ParseInt(r.URL.Query().Get("id"), 10, 64)
+			if err != nil {
+				http.Error(w, "paramètre id invalide", http.StatusBadRequest)
+				return
+			}
+			if err := store.DeleteApp(id); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			reloadRouter(store, router, log)
+			writeJSON(w, map[string]any{"deleted": id})
+
+		default:
+			http.Error(w, "méthode non supportée", http.StatusMethodNotAllowed)
+		}
+	})
+
 	mux.Handle("/", gw)
 
 	srv := &http.Server{Addr: cfg.Listen, Handler: mux}
-
 	go func() {
 		log.Info("Sentinel WAF — passerelle démarrée",
-			"listen", cfg.Listen, "upstream", cfg.Upstream, "mode", cfg.Mode,
-			"threshold", cfg.Threshold, "persistence", store != nil)
+			"listen", cfg.Listen, "upstream_defaut", cfg.Upstream, "mode", cfg.Mode,
+			"threshold", cfg.Threshold, "persistence", store != nil, "apps", router.Count())
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Error("serveur arrêté", "err", err)
 			os.Exit(1)
@@ -115,6 +174,29 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(ctx)
+}
+
+// reloadRouter recharge la table de routage depuis la base (sans effet si nil).
+func reloadRouter(store *storage.Store, router *proxy.Router, log *slog.Logger) {
+	if store == nil {
+		return
+	}
+	apps, err := store.ListApps()
+	if err != nil {
+		log.Warn("chargement des applications impossible", "err", err)
+		return
+	}
+	router.Reload(apps)
+}
+
+// refreshLoop recharge périodiquement (capte les modifications faites en base
+// hors de l'API).
+func refreshLoop(store *storage.Store, router *proxy.Router, log *slog.Logger) {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		reloadRouter(store, router, log)
+	}
 }
 
 func openStoreWithRetry(dsn string, log *slog.Logger) *storage.Store {
