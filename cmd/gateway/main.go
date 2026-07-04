@@ -117,6 +117,19 @@ func main() {
 		writeJSON(w, map[string]any{"events": events})
 	})
 
+	mux.HandleFunc("/_sentinel/analytics", func(w http.ResponseWriter, r *http.Request) {
+		if store == nil {
+			writeJSON(w, map[string]any{"persistence": false})
+			return
+		}
+		a, err := store.Analytics()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, a)
+	})
+
 	// --- Gestion des applications surveillées (multi-app) ---
 	mux.HandleFunc("/_sentinel/apps", func(w http.ResponseWriter, r *http.Request) {
 		if store == nil {

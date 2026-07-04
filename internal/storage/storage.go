@@ -247,6 +247,97 @@ func (s *Store) DeleteApp(id int64) error {
 	return err
 }
 
+// Analytics renvoie toutes les agrégations nécessaires au tableau de bord SOC,
+// en un seul appel : séries temporelles (trafic par minute), répartition par
+// catégorie, top IP attaquantes, top URLs ciblées, et bilan des verdicts.
+func (s *Store) Analytics() (map[string]any, error) {
+	out := map[string]any{}
+
+	// 1) Série temporelle : trafic par minute sur la dernière heure.
+	if rows, err := s.db.Query(`
+		SELECT to_char(date_trunc('minute', ts) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:00"Z"'),
+		       COUNT(*),
+		       COUNT(*) FILTER (WHERE verdict='blocked'),
+		       COUNT(*) FILTER (WHERE verdict='detected'),
+		       COUNT(*) FILTER (WHERE verdict='allowed')
+		FROM events
+		WHERE ts > now() - interval '60 minutes'
+		GROUP BY 1 ORDER BY 1`); err == nil {
+		var series []map[string]any
+		for rows.Next() {
+			var b string
+			var total, blocked, detected, allowed int64
+			if rows.Scan(&b, &total, &blocked, &detected, &allowed) == nil {
+				series = append(series, map[string]any{
+					"t": b, "total": total, "blocked": blocked,
+					"detected": detected, "allowed": allowed,
+				})
+			}
+		}
+		rows.Close()
+		out["timeseries"] = series
+	}
+
+	// 2) Répartition par catégorie (la colonne stocke une liste séparée par ',').
+	if rows, err := s.db.Query(`
+		SELECT cat, COUNT(*) c FROM (
+		  SELECT unnest(string_to_array(categories, ',')) AS cat
+		  FROM events WHERE categories <> ''
+		) s WHERE cat <> '' GROUP BY cat ORDER BY c DESC`); err == nil {
+		var cats []map[string]any
+		for rows.Next() {
+			var cat string
+			var c int64
+			if rows.Scan(&cat, &c) == nil {
+				cats = append(cats, map[string]any{"category": cat, "count": c})
+			}
+		}
+		rows.Close()
+		out["by_category"] = cats
+	}
+
+	// 3) Top IP par volume d'attaques.
+	if rows, err := s.db.Query(`
+		SELECT client_ip, COUNT(*),
+		       COUNT(*) FILTER (WHERE verdict IN ('blocked','detected'))
+		FROM events GROUP BY client_ip
+		ORDER BY 3 DESC, 2 DESC LIMIT 8`); err == nil {
+		var ips []map[string]any
+		for rows.Next() {
+			var ip string
+			var total, attacks int64
+			if rows.Scan(&ip, &total, &attacks) == nil {
+				ips = append(ips, map[string]any{"ip": ip, "total": total, "attacks": attacks})
+			}
+		}
+		rows.Close()
+		out["top_ips"] = ips
+	}
+
+	// 4) Top URLs ciblées par des attaques.
+	if rows, err := s.db.Query(`
+		SELECT path, COUNT(*) c FROM events
+		WHERE verdict <> 'allowed' GROUP BY path ORDER BY c DESC LIMIT 8`); err == nil {
+		var paths []map[string]any
+		for rows.Next() {
+			var p string
+			var c int64
+			if rows.Scan(&p, &c) == nil {
+				paths = append(paths, map[string]any{"path": p, "count": c})
+			}
+		}
+		rows.Close()
+		out["top_paths"] = paths
+	}
+
+	// 5) Bilan des verdicts (réutilise Stats).
+	if st, err := s.Stats(); err == nil {
+		out["verdicts"] = st
+	}
+
+	return out, nil
+}
+
 func splitComma(s string) []string {
 	var out []string
 	cur := ""
