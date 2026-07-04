@@ -29,6 +29,17 @@ services:
     image: traefik/whoami
     restart: unless-stopped
 
+  # Console d'administration (plan de contrôle) : sert l'interface React et
+  # relaie l'API vers la passerelle. Séparée du plan de données (le proxy).
+  dashboard:
+    build:
+      context: ./dashboard
+    ports:
+      - "8081:80"
+    depends_on:
+      - gateway
+    restart: unless-stopped
+
   # --- Couche de données (prête, câblage au sprint stockage) ---
   postgres:
     image: postgres:16-alpine
