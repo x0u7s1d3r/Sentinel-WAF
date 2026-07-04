@@ -93,15 +93,43 @@ sentinel-waf/
 go test ./...        # inclut la batterie du moteur sémantique SQL
 ```
 
+## Alertes Slack (facultatif)
+
+Sentinel peut envoyer une alerte Slack agrégée dès qu'une attaque est bloquée
+ou détectée. Chaque utilisateur configure **son propre** webhook — aucun secret
+n'est stocké dans le code.
+
+1. Créez un *Incoming Webhook* sur https://api.slack.com/apps (New App → From
+   scratch → Incoming Webhooks → Add New Webhook to Workspace), et choisissez le
+   canal de destination.
+2. Copiez le modèle et renseignez votre webhook :
+   ```bash
+   cp .env.example .env
+   # éditez .env et collez votre URL dans SENTINEL_SLACK_WEBHOOK
+   ```
+3. Lancez (Docker lit automatiquement le fichier `.env`) :
+   ```bash
+   docker compose up -d
+   ```
+
+Le fichier `.env` est ignoré par git : votre webhook ne part jamais sur GitHub.
+Sans webhook configuré, le WAF fonctionne normalement, sans alertes. Les alertes
+sont **agrégées** (fenêtre réglable via `SENTINEL_ALERT_INTERVAL_SEC`) pour qu'un
+scanner ne génère pas des centaines de messages.
+
 ## Feuille de route
 
 | Version | Contenu | État |
 |---------|---------|------|
 | v0.1 | Passerelle Go, moteur sémantique SQL, supervision | ✅ |
-| v0.2 | XSS sémantique + heuristiques + **persistance PostgreSQL** — reste : Redis (rate limiting) | 🚧 |
-| v0.3 | Dashboard React (accueil PME + onglet technique) | 🔜 |
-| v0.4 | Mode apprentissage (réduction des faux positifs) | 🔜 |
-| v0.5 | Intégration SOAR (Shuffle / TheHive / Elastic) | 🔜 |
+| v0.2 | XSS sémantique + heuristiques (traversée, cmd, SSRF, NoSQL, scanner) | ✅ |
+| v0.3 | Persistance PostgreSQL des événements | ✅ |
+| v0.4 | Routage multi-application (par domaine, politique par appli) | ✅ |
+| v0.5 | Alertes Slack agrégées | ✅ |
+| v0.6 | Dashboard React (accueil PME + onglet technique) | 🔜 |
+| v0.7 | Cible vulnérable de démonstration | 🔜 |
+| v0.8 | Mode apprentissage + Redis (rate limiting) | 🔜 |
+| v0.9 | Intégration SOAR (Shuffle / TheHive / Elastic) | 🔜 |
 
 Voir [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) pour le détail.
 

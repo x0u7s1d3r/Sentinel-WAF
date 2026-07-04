@@ -3,5 +3,5 @@
 *.log
 dist/
 node_modules/
-sentinel-waf.zip
 .env
+sentinel-waf.zip

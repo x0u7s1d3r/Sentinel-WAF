@@ -14,6 +14,10 @@ services:
       # surcharge possible sans reconstruire l'image
       - SENTINEL_UPSTREAM=http://demo-target:80
       - SENTINEL_DB_URL=postgres://sentinel:change_me@postgres:5432/sentinel?sslmode=disable
+      # Alertes Slack (facultatif) : renseignées via un fichier .env local.
+      # Si .env est absent, les valeurs par défaut désactivent proprement Slack.
+      - SENTINEL_SLACK_WEBHOOK=${SENTINEL_SLACK_WEBHOOK:-}
+      - SENTINEL_ALERT_INTERVAL_SEC=${SENTINEL_ALERT_INTERVAL_SEC:-15}
     depends_on:
       - demo-target
       - postgres
