@@ -3,10 +3,11 @@ import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell,
 } from 'recharts'
+import { api, CATEGORIES } from '../api.js'
 
 const CAT_COLOR = {
-  sqli: '#FF5D6C', xss: '#F5B544', path_traversal: '#9B8CFF',
-  cmd_injection: '#FF8A63', ssrf: '#4C8DFF', nosql: '#3DD6C0', scanner: '#4ADE80',
+  sqli: '#E23D43', xss: '#D9820A', path_traversal: '#9B8CFF',
+  cmd_injection: '#F97316', ssrf: '#2F6FED', nosql: '#0EA5A3', scanner: '#17A34A',
 }
 const CAT_LABEL = {
   sqli: 'SQLi', xss: 'XSS', path_traversal: 'Traversée',
@@ -33,18 +34,32 @@ function fillSeries(series) {
 }
 
 export default function SocConsole() {
-  const { stats, events, analytics } = useOutletContext()
+  const { stats, events, analytics, settings, refresh } = useOutletContext()
   const a = analytics || {}
   const series = fillSeries(a.timeseries)
   const cats = a.by_category || []
   const topIps = a.top_ips || []
   const topPaths = a.top_paths || []
 
+  const st = settings || {}
+  const enabled = new Set(st.enabled_categories || [])
+  const blocked = new Set(st.blocklist || [])
+
+  async function setMode(mode) { await api.setSettings({ mode }); refresh() }
+  async function setThreshold(threshold) { await api.setSettings({ threshold }); refresh() }
+  async function toggleCat(cat) {
+    const next = new Set(enabled)
+    next.has(cat) ? next.delete(cat) : next.add(cat)
+    await api.setSettings({ enabled_categories: [...next] }); refresh()
+  }
+  async function ban(ip) { await api.blocklist(ip, 'add'); refresh() }
+  async function unban(ip) { await api.blocklist(ip, 'remove'); refresh() }
+
   const total = stats?.total ?? 0
-  const blocked = stats?.blocked ?? 0
+  const blockedCount = stats?.blocked ?? 0
   const detected = stats?.detected ?? 0
   const allowed = stats?.allowed ?? 0
-  const rate = total ? Math.round((blocked / total) * 100) : 0
+  const rate = total ? Math.round((blockedCount / total) * 100) : 0
 
   const maxIp = Math.max(1, ...topIps.map((x) => x.attacks || x.total))
   const maxPath = Math.max(1, ...topPaths.map((x) => x.count))
@@ -60,9 +75,36 @@ export default function SocConsole() {
         </span>
       </div>
 
+      {/* Barre de contrôles rapides */}
+      {settings && (
+        <div className="ctrlbar">
+          <div className="ctrl">
+            <span className="ctrl-l">Mode</span>
+            <div className="seg">
+              <button className={st.mode === 'block' ? 'active block' : ''} onClick={() => setMode('block')}>Blocage</button>
+              <button className={st.mode === 'detect' ? 'active detect' : ''} onClick={() => setMode('detect')}>Surveillance</button>
+            </div>
+          </div>
+          <div className="ctrl">
+            <span className="ctrl-l">Seuil {st.threshold}</span>
+            <input type="range" min="1" max="12" value={st.threshold}
+              onChange={(e) => setThreshold(Number(e.target.value))} className="slider sm" />
+          </div>
+          <div className="ctrl chips">
+            <span className="ctrl-l">Protections</span>
+            {CATEGORIES.map(([key, name]) => (
+              <button key={key} className={`chip-toggle ${enabled.has(key) ? 'on' : ''}`}
+                onClick={() => toggleCat(key)} title={name}>
+                {name.replace('Injection ', '').replace('Cross-Site Scripting', 'XSS').replace('Server-Side Request Forgery', 'SSRF')}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="kpis">
         <Kpi cls="" k="Requêtes" v={total} d="analysées" />
-        <Kpi cls="blocked" k="Bloquées" v={blocked} d="attaques stoppées" />
+        <Kpi cls="blocked" k="Bloquées" v={blockedCount} d="attaques stoppées" />
         <Kpi cls="detected" k="Surveillance" v={detected} d="détectées, laissées passer" />
         <Kpi cls="allowed" k="Autorisées" v={allowed} d="trafic légitime" />
         <Kpi cls="rate" k="Taux de blocage" v={rate + '%'} d="des requêtes" />
@@ -80,29 +122,29 @@ export default function SocConsole() {
               <AreaChart data={series} margin={{ top: 6, right: 8, left: -18, bottom: 0 }}>
                 <defs>
                   <linearGradient id="gAllowed" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#4ADE80" stopOpacity={0.35} />
-                    <stop offset="100%" stopColor="#4ADE80" stopOpacity={0} />
+                    <stop offset="0%" stopColor="#17A34A" stopOpacity={0.35} />
+                    <stop offset="100%" stopColor="#17A34A" stopOpacity={0} />
                   </linearGradient>
                   <linearGradient id="gBlocked" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#FF5D6C" stopOpacity={0.5} />
-                    <stop offset="100%" stopColor="#FF5D6C" stopOpacity={0} />
+                    <stop offset="0%" stopColor="#E23D43" stopOpacity={0.5} />
+                    <stop offset="100%" stopColor="#E23D43" stopOpacity={0} />
                   </linearGradient>
                   <linearGradient id="gDetected" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#F5B544" stopOpacity={0.4} />
-                    <stop offset="100%" stopColor="#F5B544" stopOpacity={0} />
+                    <stop offset="0%" stopColor="#D9820A" stopOpacity={0.4} />
+                    <stop offset="100%" stopColor="#D9820A" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <XAxis dataKey="t" tickFormatter={hhmm} tick={{ fill: '#566072', fontSize: 11 }}
-                  axisLine={{ stroke: '#1C2531' }} tickLine={false} minTickGap={40} />
-                <YAxis allowDecimals={false} tick={{ fill: '#566072', fontSize: 11 }}
+                <XAxis dataKey="t" tickFormatter={hhmm} tick={{ fill: '#7A8AA0', fontSize: 11 }}
+                  axisLine={{ stroke: '#E4EBF4' }} tickLine={false} minTickGap={40} />
+                <YAxis allowDecimals={false} tick={{ fill: '#7A8AA0', fontSize: 11 }}
                   axisLine={false} tickLine={false} width={38} />
                 <Tooltip
                   labelFormatter={hhmm}
-                  contentStyle={{ background: '#0D131C', border: '1px solid #2A3646', borderRadius: 8, fontSize: 12 }}
-                  labelStyle={{ color: '#8695AB' }} />
-                <Area type="monotone" dataKey="allowed" stackId="1" stroke="#4ADE80" fill="url(#gAllowed)" strokeWidth={1.5} name="Autorisées" />
-                <Area type="monotone" dataKey="detected" stackId="1" stroke="#F5B544" fill="url(#gDetected)" strokeWidth={1.5} name="Surveillance" />
-                <Area type="monotone" dataKey="blocked" stackId="1" stroke="#FF5D6C" fill="url(#gBlocked)" strokeWidth={1.5} name="Bloquées" />
+                  contentStyle={{ background: '#FFFFFF', border: '1px solid #CFDCEC', borderRadius: 8, fontSize: 12 }}
+                  labelStyle={{ color: '#5C6B80' }} />
+                <Area type="monotone" dataKey="allowed" stackId="1" stroke="#17A34A" fill="url(#gAllowed)" strokeWidth={1.5} name="Autorisées" />
+                <Area type="monotone" dataKey="detected" stackId="1" stroke="#D9820A" fill="url(#gDetected)" strokeWidth={1.5} name="Surveillance" />
+                <Area type="monotone" dataKey="blocked" stackId="1" stroke="#E23D43" fill="url(#gBlocked)" strokeWidth={1.5} name="Bloquées" />
               </AreaChart>
             </ResponsiveContainer>
           )}
@@ -121,17 +163,17 @@ export default function SocConsole() {
                     <Pie data={cats} dataKey="count" nameKey="category"
                       innerRadius={44} outerRadius={64} paddingAngle={2} stroke="none">
                       {cats.map((c) => (
-                        <Cell key={c.category} fill={CAT_COLOR[c.category] || '#8695AB'} />
+                        <Cell key={c.category} fill={CAT_COLOR[c.category] || '#5C6B80'} />
                       ))}
                     </Pie>
-                    <Tooltip contentStyle={{ background: '#0D131C', border: '1px solid #2A3646', borderRadius: 8, fontSize: 12 }} />
+                    <Tooltip contentStyle={{ background: '#FFFFFF', border: '1px solid #CFDCEC', borderRadius: 8, fontSize: 12 }} />
                   </PieChart>
                 </ResponsiveContainer>
               </div>
               <div className="donut-legend">
                 {cats.map((c) => (
                   <div className="li" key={c.category}>
-                    <i style={{ background: CAT_COLOR[c.category] || '#8695AB' }} />
+                    <i style={{ background: CAT_COLOR[c.category] || '#5C6B80' }} />
                     {CAT_LABEL[c.category] || c.category}
                     <span className="c">{c.count} · {Math.round((c.count / catTotal) * 100)}%</span>
                   </div>
@@ -147,9 +189,14 @@ export default function SocConsole() {
           {topIps.length === 0 ? <Empty msg="Aucune source détectée." /> : (
             <div className="toplist">
               {topIps.map((x) => (
-                <div className="toprow threat" key={x.ip}>
+                <div className="toprow threat ban" key={x.ip}>
                   <span className="lbl">{x.ip}</span>
-                  <span className="val">{x.attacks || x.total} att.</span>
+                  <span className="val">
+                    {x.attacks || x.total} att.
+                    {blocked.has(x.ip)
+                      ? <button className="banbtn banned" onClick={() => unban(x.ip)} title="Débannir">banni ✕</button>
+                      : <button className="banbtn" onClick={() => ban(x.ip)} title="Bannir cette IP">bannir</button>}
+                  </span>
                   <span className="track"><span className="fill" style={{ width: `${((x.attacks || x.total) / maxIp) * 100}%` }} /></span>
                 </div>
               ))}

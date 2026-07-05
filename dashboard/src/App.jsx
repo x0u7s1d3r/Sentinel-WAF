@@ -2,26 +2,25 @@ import { useEffect, useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { api } from './api.js'
 
-// Le layout récupère les données et les partage aux pages via l'Outlet,
-// en rafraîchissant toutes les 2 s pour un rendu « temps réel ».
 export default function App() {
   const [data, setData] = useState({
-    health: null, stats: null, events: [], apps: [], analytics: null, connected: null,
+    health: null, stats: null, events: [], apps: [], analytics: null,
+    settings: null, connected: null,
   })
 
   async function refresh() {
     try {
-      const [health, stats, eventsRes, appsRes, analytics] = await Promise.all([
+      const [health, stats, eventsRes, appsRes, analytics, settings] = await Promise.all([
         api.health(), api.stats(), api.events(),
         api.apps().catch(() => ({ apps: [] })),
         api.analytics().catch(() => null),
+        api.settings().catch(() => null),
       ])
       setData({
         health, stats,
         events: eventsRes.events || [],
         apps: appsRes.apps || [],
-        analytics,
-        connected: true,
+        analytics, settings, connected: true,
       })
     } catch {
       setData((d) => ({ ...d, connected: false }))
@@ -34,19 +33,29 @@ export default function App() {
     return () => clearInterval(id)
   }, [])
 
-  const mode = data.health?.mode || 'block'
+  const mode = data.settings?.mode || data.health?.mode || 'block'
 
   return (
     <div className="shell">
       <header className="topbar">
         <div className="brand">
-          <div className="mark">S</div>
+          <svg className="logo" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <linearGradient id="lg" x1="0" y1="0" x2="40" y2="40">
+                <stop offset="0" stopColor="#3B82F6" />
+                <stop offset="1" stopColor="#2456C8" />
+              </linearGradient>
+            </defs>
+            <path d="M20 3 L34 8.5 V20 C34 29 27.5 35 20 37.5 C12.5 35 6 29 6 20 V8.5 Z" fill="url(#lg)" />
+            <path d="M13.5 20 l4.5 4.5 l9 -10" stroke="#fff" strokeWidth="2.8" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
           <div className="name">Sentinel <span>WAF</span></div>
         </div>
         <nav className="nav">
           <NavLink to="/" end>Vue d'ensemble</NavLink>
           <NavLink to="/supervision">Supervision</NavLink>
           <NavLink to="/applications">Applications</NavLink>
+          <NavLink to="/parametres">Paramètres</NavLink>
         </nav>
         <div className="spacer" />
         <div className={`mode-badge ${mode === 'detect' ? 'detect' : ''}`}>

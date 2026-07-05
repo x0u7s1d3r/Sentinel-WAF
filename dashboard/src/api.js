@@ -8,21 +8,26 @@ async function get(path) {
   return r.json()
 }
 
+async function post(path, body) {
+  const r = await fetch(BASE + path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!r.ok) return r.text().then((t) => Promise.reject(new Error(t)))
+  return r.json()
+}
+
 export const api = {
   health: () => get('/health'),
   stats: () => get('/stats'),
   events: () => get('/events'),
   analytics: () => get('/analytics'),
   apps: () => get('/apps'),
-  addApp: (app) =>
-    fetch(BASE + '/apps', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(app),
-    }).then((r) => {
-      if (!r.ok) return r.text().then((t) => Promise.reject(new Error(t)))
-      return r.json()
-    }),
+  settings: () => get('/settings'),
+  setSettings: (body) => post('/settings', body),
+  blocklist: (ip, action) => post('/blocklist', { ip, action }),
+  addApp: (app) => post('/apps', app),
   deleteApp: (id) =>
     fetch(`${BASE}/apps?id=${id}`, { method: 'DELETE' }).then((r) => {
       if (!r.ok) throw new Error(`suppression -> HTTP ${r.status}`)
@@ -30,13 +35,13 @@ export const api = {
     }),
 }
 
-// Libellés des catégories de détection (ordre d'affichage).
+// Libellés + descriptions des catégories de détection (ordre d'affichage).
 export const CATEGORIES = [
-  ['sqli', 'Injection SQL', 'Requêtes piégées vers la base'],
-  ['xss', 'Cross-Site Scripting', 'Scripts injectés dans les pages'],
-  ['path_traversal', 'Traversée de fichiers', 'Accès aux fichiers du serveur'],
+  ['sqli', 'Injection SQL', 'Requêtes piégées vers la base de données'],
+  ['xss', 'Cross-Site Scripting', 'Scripts malveillants injectés dans les pages'],
+  ['path_traversal', 'Traversée de fichiers', 'Accès non autorisé aux fichiers du serveur'],
   ['cmd_injection', 'Injection de commande', 'Commandes système détournées'],
-  ['ssrf', 'SSRF', 'Requêtes internes forgées'],
+  ['ssrf', 'SSRF', 'Requêtes internes forgées par l’attaquant'],
   ['nosql', 'Injection NoSQL', 'Requêtes NoSQL piégées'],
-  ['scanner', 'Scanners', 'Outils d’attaque automatisés'],
+  ['scanner', 'Scanners', 'Outils d’attaque automatisés (sqlmap, nikto…)'],
 ]

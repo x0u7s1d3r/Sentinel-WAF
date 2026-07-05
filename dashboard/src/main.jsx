@@ -5,6 +5,7 @@ import App from './App.jsx'
 import SiteStatus from './pages/SiteStatus.jsx'
 import SocConsole from './pages/SocConsole.jsx'
 import Applications from './pages/Applications.jsx'
+import Settings from './pages/Settings.jsx'
 import './index.css'
 
 const router = createBrowserRouter([
@@ -15,6 +16,7 @@ const router = createBrowserRouter([
       { index: true, element: <SiteStatus /> },
       { path: 'supervision', element: <SocConsole /> },
       { path: 'applications', element: <Applications /> },
+      { path: 'parametres', element: <Settings /> },
     ],
   },
 ])

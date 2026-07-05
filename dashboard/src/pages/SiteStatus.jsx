@@ -39,7 +39,7 @@ export default function SiteStatus() {
           <span className="ring" />
           <svg viewBox="0 0 100 100" fill="none">
             <path d="M50 6 L86 20 V48 C86 72 70 88 50 96 C30 88 14 72 14 48 V20 Z"
-              fill="#6fcf9714" stroke="var(--safe)" strokeWidth="2.5" />
+              fill="#2F6FED12" stroke="var(--safe)" strokeWidth="2.5" />
             <path d="M36 50 l10 10 l20 -22" stroke="var(--safe)" strokeWidth="4"
               fill="none" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
