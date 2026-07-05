@@ -3,7 +3,8 @@ import ReactDOM from 'react-dom/client'
 import { createBrowserRouter, RouterProvider } from 'react-router-dom'
 import App from './App.jsx'
 import SiteStatus from './pages/SiteStatus.jsx'
-import TechConsole from './pages/TechConsole.jsx'
+import SocConsole from './pages/SocConsole.jsx'
+import Applications from './pages/Applications.jsx'
 import './index.css'
 
 const router = createBrowserRouter([
@@ -12,7 +13,8 @@ const router = createBrowserRouter([
     element: <App />,
     children: [
       { index: true, element: <SiteStatus /> },
-      { path: 'technique', element: <TechConsole /> },
+      { path: 'supervision', element: <SocConsole /> },
+      { path: 'applications', element: <Applications /> },
     ],
   },
 ])

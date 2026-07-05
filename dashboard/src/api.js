@@ -12,6 +12,7 @@ export const api = {
   health: () => get('/health'),
   stats: () => get('/stats'),
   events: () => get('/events'),
+  analytics: () => get('/analytics'),
   apps: () => get('/apps'),
   addApp: (app) =>
     fetch(BASE + '/apps', {

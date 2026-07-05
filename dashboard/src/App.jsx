@@ -2,22 +2,25 @@ import { useEffect, useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { api } from './api.js'
 
-// Le layout récupère les données une fois pour toutes et les partage aux pages
-// via le contexte du routeur (Outlet), en les rafraîchissant toutes les 2 s.
+// Le layout récupère les données et les partage aux pages via l'Outlet,
+// en rafraîchissant toutes les 2 s pour un rendu « temps réel ».
 export default function App() {
   const [data, setData] = useState({
-    health: null, stats: null, events: [], apps: [], connected: null,
+    health: null, stats: null, events: [], apps: [], analytics: null, connected: null,
   })
 
   async function refresh() {
     try {
-      const [health, stats, eventsRes, appsRes] = await Promise.all([
-        api.health(), api.stats(), api.events(), api.apps().catch(() => ({ apps: [] })),
+      const [health, stats, eventsRes, appsRes, analytics] = await Promise.all([
+        api.health(), api.stats(), api.events(),
+        api.apps().catch(() => ({ apps: [] })),
+        api.analytics().catch(() => null),
       ])
       setData({
         health, stats,
         events: eventsRes.events || [],
         apps: appsRes.apps || [],
+        analytics,
         connected: true,
       })
     } catch {
@@ -41,8 +44,9 @@ export default function App() {
           <div className="name">Sentinel <span>WAF</span></div>
         </div>
         <nav className="nav">
-          <NavLink to="/" end>État du site</NavLink>
-          <NavLink to="/technique">Console technique</NavLink>
+          <NavLink to="/" end>Vue d'ensemble</NavLink>
+          <NavLink to="/supervision">Supervision</NavLink>
+          <NavLink to="/applications">Applications</NavLink>
         </nav>
         <div className="spacer" />
         <div className={`mode-badge ${mode === 'detect' ? 'detect' : ''}`}>

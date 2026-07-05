@@ -14,6 +14,8 @@
   --threat:    #F06565;  /* bloqué / menace */
   --accent:    #4CC0A8;  /* marque */
   --accent-dim:#4CC0A81f;
+  --blue:      #4C8DFF;
+  --violet:    #9B8CFF;
 
   --radius: 14px;
   --display: 'Space Grotesk', system-ui, sans-serif;
@@ -198,4 +200,77 @@ a { color: inherit; text-decoration: none; }
   .hero { grid-template-columns: 1fr; text-align: center; justify-items: center; }
   .grid-2 { grid-template-columns: 1fr; }
   .nav a { padding: 8px 10px; }
+}
+
+/* =========================================================================
+   Console SOC — dense, sombre, moderne
+   ========================================================================= */
+.soc { display: grid; gap: 16px; }
+
+/* Bandeau live */
+.live-strip { display: flex; align-items: center; gap: 10px; margin-bottom: 2px; }
+.live-strip .live { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); font-family: var(--mono); }
+.live-strip .live i { width: 8px; height: 8px; border-radius: 50%; background: var(--threat); animation: beat 1.4s infinite; }
+@keyframes beat { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
+.live-strip .sep { color: var(--faint); }
+
+/* KPI dense */
+.kpis { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
+.kpi { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; position: relative; }
+.kpi .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.kpi .v { font-family: var(--display); font-size: 28px; font-weight: 700; margin-top: 4px; line-height: 1; }
+.kpi .d { font-size: 11px; color: var(--faint); margin-top: 6px; font-family: var(--mono); }
+.kpi.blocked .v { color: var(--threat); }
+.kpi.detected .v { color: var(--warn); }
+.kpi.allowed .v { color: var(--safe); }
+.kpi.rate .v { color: var(--accent); }
+
+/* Grille SOC : hero courbe pleine largeur, puis 3 colonnes */
+.soc-hero { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 16px 18px; }
+.soc-cols { display: grid; grid-template-columns: 1.1fr 1fr 1fr; gap: 16px; }
+.panelbox { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px; min-height: 260px; display: flex; flex-direction: column; }
+.panelbox h3 { margin: 0 0 12px; font-family: var(--display); font-size: 13px; font-weight: 600; display: flex; align-items: center; justify-content: space-between; }
+.panelbox h3 .hint { font-size: 11px; color: var(--faint); font-weight: 400; }
+
+/* Top-listes avec barres de proportion */
+.toplist { display: flex; flex-direction: column; gap: 9px; }
+.toprow { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; }
+.toprow .lbl { font-family: var(--mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.toprow .val { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.toprow .track { grid-column: 1 / -1; height: 5px; border-radius: 3px; background: var(--panel-2); overflow: hidden; }
+.toprow .fill { height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--accent), var(--blue)); }
+.toprow.threat .fill { background: linear-gradient(90deg, var(--threat), #ff8a63); }
+
+/* Légende donut */
+.donut-legend { display: flex; flex-direction: column; gap: 7px; margin-top: 6px; }
+.donut-legend .li { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.donut-legend .li i { width: 9px; height: 9px; border-radius: 3px; }
+.donut-legend .li .c { margin-left: auto; font-family: var(--mono); color: var(--muted); }
+
+/* Flux d'événements dense */
+.stream { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
+.stream .sh { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.stream .sh h3 { margin: 0; font-family: var(--display); font-size: 13px; font-weight: 600; }
+.stream .rows { font-family: var(--mono); font-size: 12px; max-height: 340px; overflow: auto; }
+.srow { display: grid; grid-template-columns: 66px 70px 54px 1fr 130px 40px; gap: 10px; align-items: center; padding: 8px 16px; border-bottom: 1px solid var(--border); }
+.srow:hover { background: var(--panel-2); }
+.srow .t { color: var(--faint); }
+.srow .pill { font-weight: 600; font-size: 9px; text-align: center; padding: 3px 0; border-radius: 4px; }
+.srow.blocked .pill { background: #ff5d6c1f; color: var(--threat); }
+.srow.detected .pill { background: #f5b5441f; color: var(--warn); }
+.srow.allowed .pill { background: #4ade801a; color: var(--safe); }
+.srow .m { color: var(--accent); }
+.srow .p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.srow .ip { color: var(--muted); }
+.srow .sc { text-align: right; color: var(--faint); }
+.srow.blocked { border-left: 2px solid var(--threat); }
+.srow.detected { border-left: 2px solid var(--warn); }
+
+.rc-tooltip { background: var(--panel-2) !important; border: 1px solid var(--border-hi) !important; border-radius: 8px !important; font-size: 12px; }
+
+@media (max-width: 980px) {
+  .kpis { grid-template-columns: repeat(2, 1fr); }
+  .soc-cols { grid-template-columns: 1fr; }
+  .srow { grid-template-columns: 60px 64px 1fr 90px; }
+  .srow .m, .srow .sc { display: none; }
 }
