@@ -2,7 +2,8 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { createBrowserRouter, RouterProvider } from 'react-router-dom'
 import App from './App.jsx'
-import SiteStatus from './pages/SiteStatus.jsx'
+import Overview from './pages/Overview.jsx'
+import SiteDetail from './pages/SiteDetail.jsx'
 import SocConsole from './pages/SocConsole.jsx'
 import Applications from './pages/Applications.jsx'
 import Settings from './pages/Settings.jsx'
@@ -13,7 +14,8 @@ const router = createBrowserRouter([
     path: '/',
     element: <App />,
     children: [
-      { index: true, element: <SiteStatus /> },
+      { index: true, element: <Overview /> },
+      { path: 'site/:name', element: <SiteDetail /> },
       { path: 'supervision', element: <SocConsole /> },
       { path: 'applications', element: <Applications /> },
       { path: 'parametres', element: <Settings /> },

@@ -20,14 +20,32 @@ async function post(path, body) {
 
 export const api = {
   health: () => get('/health'),
-  stats: () => get('/stats'),
-  events: () => get('/events'),
-  analytics: () => get('/analytics'),
+  stats: (app) => get('/stats' + (app ? `?app=${encodeURIComponent(app)}` : '')),
+  events: (app) => get('/events' + (app ? `?app=${encodeURIComponent(app)}` : '')),
+  analytics: (app) => get('/analytics' + (app ? `?app=${encodeURIComponent(app)}` : '')),
   apps: () => get('/apps'),
   settings: () => get('/settings'),
   setSettings: (body) => post('/settings', body),
   blocklist: (ip, action) => post('/blocklist', { ip, action }),
   addApp: (app) => post('/apps', app),
+  updateApp: (id, mode, threshold) =>
+    fetch(BASE + '/apps', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, mode, threshold }),
+    }).then((r) => {
+      if (!r.ok) return r.text().then((t) => Promise.reject(new Error(t)))
+      return r.json()
+    }),
+  updateApp: (id, mode, threshold) =>
+    fetch(`${BASE}/apps`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, mode, threshold }),
+    }).then((r) => {
+      if (!r.ok) return r.text().then((t) => Promise.reject(new Error(t)))
+      return r.json()
+    }),
   deleteApp: (id) =>
     fetch(`${BASE}/apps?id=${id}`, { method: 'DELETE' }).then((r) => {
       if (!r.ok) throw new Error(`suppression -> HTTP ${r.status}`)

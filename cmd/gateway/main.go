@@ -96,7 +96,7 @@ func main() {
 	})
 	mux.HandleFunc("/_sentinel/stats", func(w http.ResponseWriter, r *http.Request) {
 		if store != nil {
-			if s, err := store.Stats(); err == nil {
+			if s, err := store.Stats(r.URL.Query().Get("app")); err == nil {
 				writeJSON(w, s)
 				return
 			}
@@ -113,7 +113,7 @@ func main() {
 			writeJSON(w, map[string]any{"events": []any{}, "persistence": false})
 			return
 		}
-		events, err := store.Recent(100)
+		events, err := store.Recent(100, r.URL.Query().Get("app"))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -126,7 +126,7 @@ func main() {
 			writeJSON(w, map[string]any{"persistence": false})
 			return
 		}
-		a, err := store.Analytics()
+		a, err := store.Analytics(r.URL.Query().Get("app"))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -217,6 +217,23 @@ func main() {
 			reloadRouter(store, router, log)
 			w.WriteHeader(http.StatusCreated)
 			writeJSON(w, created)
+
+		case http.MethodPut:
+			var body struct {
+				ID        int64  `json:"id"`
+				Mode      string `json:"mode"`
+				Threshold int    `json:"threshold"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ID == 0 {
+				http.Error(w, "id, mode et threshold requis", http.StatusBadRequest)
+				return
+			}
+			if err := store.UpdateApp(body.ID, body.Mode, body.Threshold); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			reloadRouter(store, router, log)
+			writeJSON(w, map[string]any{"updated": body.ID})
 
 		case http.MethodDelete:
 			id, err := strconv.ParseInt(r.URL.Query().Get("id"), 10, 64)

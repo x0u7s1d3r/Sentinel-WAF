@@ -112,6 +112,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Persistance asynchrone (ne bloque jamais le trafic ; ignorée si store nil).
 	g.store.Log(storage.Event{
+		App:        appName,
 		ClientIP:   ip,
 		Method:     req.Method,
 		Path:       req.Path,

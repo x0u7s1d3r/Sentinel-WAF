@@ -22,6 +22,7 @@ import (
 type Event struct {
 	ID         int64     `json:"id"`
 	TS         time.Time `json:"ts"`
+	App        string    `json:"app"`
 	ClientIP   string    `json:"client_ip"`
 	Method     string    `json:"method"`
 	Path       string    `json:"path"`
@@ -43,6 +44,7 @@ const schema = `
 CREATE TABLE IF NOT EXISTS events (
     id         BIGSERIAL PRIMARY KEY,
     ts         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    app        TEXT   NOT NULL DEFAULT 'default',
     client_ip  TEXT   NOT NULL,
     method     TEXT   NOT NULL,
     path       TEXT   NOT NULL,
@@ -52,7 +54,10 @@ CREATE TABLE IF NOT EXISTS events (
     findings   JSONB,
     latency_us BIGINT
 );
+-- pour les bases créées avant l'étiquetage par site
+ALTER TABLE events ADD COLUMN IF NOT EXISTS app TEXT NOT NULL DEFAULT 'default';
 CREATE INDEX IF NOT EXISTS events_ts_idx ON events (ts DESC);
+CREATE INDEX IF NOT EXISTS events_app_idx ON events (app);
 
 CREATE TABLE IF NOT EXISTS applications (
     id           BIGSERIAL PRIMARY KEY,
@@ -132,22 +137,32 @@ func (s *Store) insert(ev Event) {
 		}
 		cats += c
 	}
+	app := ev.App
+	if app == "" {
+		app = "default"
+	}
 	_, _ = s.db.Exec(
-		`INSERT INTO events (client_ip, method, path, verdict, score, categories, findings, latency_us)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-		ev.ClientIP, ev.Method, ev.Path, ev.Verdict, ev.Score, cats,
+		`INSERT INTO events (app, client_ip, method, path, verdict, score, categories, findings, latency_us)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+		app, ev.ClientIP, ev.Method, ev.Path, ev.Verdict, ev.Score, cats,
 		string(findings), ev.LatencyUS,
 	)
 }
 
-// Recent renvoie les derniers événements (pour le dashboard / l'API).
-func (s *Store) Recent(limit int) ([]Event, error) {
+// Recent renvoie les derniers événements (filtré par site si app != "").
+func (s *Store) Recent(limit int, app string) ([]Event, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	rows, err := s.db.Query(
-		`SELECT id, ts, client_ip, method, path, verdict, score, categories, latency_us
-		 FROM events ORDER BY id DESC LIMIT $1`, limit)
+	q := `SELECT id, ts, app, client_ip, method, path, verdict, score, categories, latency_us
+	      FROM events WHERE 1=1`
+	args := []any{}
+	if app != "" {
+		q += " AND app = $1"
+		args = append(args, app)
+	}
+	q += " ORDER BY id DESC LIMIT " + itoaLimit(limit)
+	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +172,7 @@ func (s *Store) Recent(limit int) ([]Event, error) {
 	for rows.Next() {
 		var e Event
 		var cats string
-		if err := rows.Scan(&e.ID, &e.TS, &e.ClientIP, &e.Method, &e.Path,
+		if err := rows.Scan(&e.ID, &e.TS, &e.App, &e.ClientIP, &e.Method, &e.Path,
 			&e.Verdict, &e.Score, &cats, &e.LatencyUS); err != nil {
 			return nil, err
 		}
@@ -169,17 +184,33 @@ func (s *Store) Recent(limit int) ([]Event, error) {
 	return out, rows.Err()
 }
 
-// Stats renvoie des agrégats persistants (survivent au redémarrage).
-func (s *Store) Stats() (map[string]any, error) {
-	row := s.db.QueryRow(`
-		SELECT
+func itoaLimit(n int) string {
+	digits := ""
+	if n == 0 {
+		return "0"
+	}
+	for n > 0 {
+		digits = string(rune('0'+n%10)) + digits
+		n /= 10
+	}
+	return digits
+}
+
+// Stats renvoie des agrégats persistants (filtré par site si app != "").
+func (s *Store) Stats(app string) (map[string]any, error) {
+	q := `SELECT
 		  COUNT(*),
 		  COUNT(*) FILTER (WHERE verdict='blocked'),
 		  COUNT(*) FILTER (WHERE verdict='detected'),
 		  COUNT(*) FILTER (WHERE verdict='allowed')
-		FROM events`)
+		FROM events WHERE 1=1`
+	args := []any{}
+	if app != "" {
+		q += " AND app = $1"
+		args = append(args, app)
+	}
 	var total, blocked, detected, allowed int64
-	if err := row.Scan(&total, &blocked, &detected, &allowed); err != nil {
+	if err := s.db.QueryRow(q, args...).Scan(&total, &blocked, &detected, &allowed); err != nil {
 		return nil, err
 	}
 	return map[string]any{
@@ -252,6 +283,20 @@ func (s *Store) DeleteApp(id int64) error {
 	return err
 }
 
+// UpdateApp modifie le mode et le seuil d'une application.
+func (s *Store) UpdateApp(id int64, mode string, threshold int) error {
+	if mode != "block" && mode != "detect" {
+		mode = "block"
+	}
+	if threshold < 1 {
+		threshold = 4
+	}
+	_, err := s.db.Exec(
+		`UPDATE applications SET mode = $2, threshold = $3 WHERE id = $1`,
+		id, mode, threshold)
+	return err
+}
+
 // SaveSetting persiste une valeur de configuration (sérialisée en JSON).
 func (s *Store) SaveSetting(key string, v any) error {
 	if s == nil {
@@ -286,8 +331,15 @@ func (s *Store) LoadSetting(key string, dest any) (bool, error) {
 // Analytics renvoie toutes les agrégations nécessaires au tableau de bord SOC,
 // en un seul appel : séries temporelles (trafic par minute), répartition par
 // catégorie, top IP attaquantes, top URLs ciblées, et bilan des verdicts.
-func (s *Store) Analytics() (map[string]any, error) {
+func (s *Store) Analytics(app string) (map[string]any, error) {
 	out := map[string]any{}
+	// Clause de filtrage par site : appApp() renvoie soit "", soit " AND app=$1".
+	af := ""
+	args := []any{}
+	if app != "" {
+		af = " AND app = $1"
+		args = append(args, app)
+	}
 
 	// 1) Série temporelle : trafic par minute sur la dernière heure.
 	if rows, err := s.db.Query(`
@@ -297,8 +349,8 @@ func (s *Store) Analytics() (map[string]any, error) {
 		       COUNT(*) FILTER (WHERE verdict='detected'),
 		       COUNT(*) FILTER (WHERE verdict='allowed')
 		FROM events
-		WHERE ts > now() - interval '60 minutes'
-		GROUP BY 1 ORDER BY 1`); err == nil {
+		WHERE ts > now() - interval '60 minutes'`+af+`
+		GROUP BY 1 ORDER BY 1`, args...); err == nil {
 		var series []map[string]any
 		for rows.Next() {
 			var b string
@@ -318,8 +370,8 @@ func (s *Store) Analytics() (map[string]any, error) {
 	if rows, err := s.db.Query(`
 		SELECT cat, COUNT(*) c FROM (
 		  SELECT unnest(string_to_array(categories, ',')) AS cat
-		  FROM events WHERE categories <> ''
-		) s WHERE cat <> '' GROUP BY cat ORDER BY c DESC`); err == nil {
+		  FROM events WHERE categories <> ''`+af+`
+		) s WHERE cat <> '' GROUP BY cat ORDER BY c DESC`, args...); err == nil {
 		var cats []map[string]any
 		for rows.Next() {
 			var cat string
@@ -336,8 +388,8 @@ func (s *Store) Analytics() (map[string]any, error) {
 	if rows, err := s.db.Query(`
 		SELECT client_ip, COUNT(*),
 		       COUNT(*) FILTER (WHERE verdict IN ('blocked','detected'))
-		FROM events GROUP BY client_ip
-		ORDER BY 3 DESC, 2 DESC LIMIT 8`); err == nil {
+		FROM events WHERE 1=1`+af+`
+		GROUP BY client_ip ORDER BY 3 DESC, 2 DESC LIMIT 8`, args...); err == nil {
 		var ips []map[string]any
 		for rows.Next() {
 			var ip string
@@ -353,7 +405,8 @@ func (s *Store) Analytics() (map[string]any, error) {
 	// 4) Top URLs ciblées par des attaques.
 	if rows, err := s.db.Query(`
 		SELECT path, COUNT(*) c FROM events
-		WHERE verdict <> 'allowed' GROUP BY path ORDER BY c DESC LIMIT 8`); err == nil {
+		WHERE verdict <> 'allowed'`+af+`
+		GROUP BY path ORDER BY c DESC LIMIT 8`, args...); err == nil {
 		var paths []map[string]any
 		for rows.Next() {
 			var p string
@@ -366,8 +419,8 @@ func (s *Store) Analytics() (map[string]any, error) {
 		out["top_paths"] = paths
 	}
 
-	// 5) Bilan des verdicts (réutilise Stats).
-	if st, err := s.Stats(); err == nil {
+	// 5) Bilan des verdicts (réutilise Stats, filtré par site).
+	if st, err := s.Stats(app); err == nil {
 		out["verdicts"] = st
 	}
 

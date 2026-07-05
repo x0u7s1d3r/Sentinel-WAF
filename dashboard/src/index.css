@@ -80,7 +80,7 @@ a { color: inherit; text-decoration: none; }
   display: grid; grid-template-columns: auto 1fr; gap: 26px; align-items: center;
   padding: 30px 32px; margin-bottom: 22px;
   background:
-    radial-gradient(400px 200px at 20% 10%, #1a2a22 0%, transparent 70%),
+    radial-gradient(420px 220px at 18% 8%, #DDE8FA 0%, transparent 72%),
     var(--panel);
   border: 1px solid var(--border); border-radius: 18px;
 }
@@ -93,9 +93,9 @@ a { color: inherit; text-decoration: none; }
   box-shadow: 0 0 0 0 var(--safe); animation: guard 3s infinite;
 }
 @keyframes guard {
-  0% { box-shadow: 0 0 0 0 #17a34a55; }
-  70% { box-shadow: 0 0 0 22px #17a34a00; }
-  100% { box-shadow: 0 0 0 0 #17a34a00; }
+  0% { box-shadow: 0 0 0 0 #2F6FED44; }
+  70% { box-shadow: 0 0 0 22px #2F6FED00; }
+  100% { box-shadow: 0 0 0 0 #2F6FED00; }
 }
 .hero .status-label { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .1em; }
 .hero .status { font-family: var(--display); font-size: 44px; font-weight: 700; line-height: 1.05; margin: 4px 0 8px; }
@@ -358,3 +358,35 @@ a { color: inherit; text-decoration: none; }
 .topbar { box-shadow: var(--shadow); }
 .nav a.active { background: var(--accent-dim); color: var(--accent); }
 .nav a:hover { background: var(--panel-2); }
+
+/* ===================== Cartes de sites (Vue d'ensemble) ===================== */
+.sites-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+.site-card {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+  padding: 16px; box-shadow: var(--shadow); transition: .16s; display: block;
+}
+.site-card:hover { border-color: var(--accent); box-shadow: var(--shadow-hi); transform: translateY(-2px); }
+.site-top { display: flex; align-items: center; gap: 11px; margin-bottom: 12px; }
+.site-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.site-dot.calm { background: var(--safe); box-shadow: 0 0 0 4px #17a34a1a; }
+.site-dot.attacked { background: var(--threat); box-shadow: 0 0 0 4px #e23d431a; animation: beat 1.2s infinite; }
+.site-id { flex: 1; min-width: 0; }
+.site-name { font-family: var(--display); font-weight: 600; font-size: 15px; }
+.site-dom { font-family: var(--mono); font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.site-status { font-size: 13px; font-weight: 600; margin-bottom: 12px; }
+.site-status.calm { color: var(--safe); }
+.site-status.attacked { color: var(--threat); }
+.site-metrics { display: flex; gap: 18px; padding: 12px 0; border-top: 1px solid var(--border); }
+.site-metrics > div { display: flex; flex-direction: column; }
+.site-metrics .m-v { font-family: var(--display); font-size: 20px; font-weight: 700; }
+.site-metrics .m-v.threat { color: var(--threat); }
+.site-metrics .m-v.warn { color: var(--warn); }
+.site-metrics .m-k { font-size: 11px; color: var(--muted); }
+.site-go { font-size: 12px; color: var(--accent); font-weight: 600; margin-top: 4px; }
+
+/* Retour + contrôle mode dans le hero détail */
+.back { display: inline-block; font-size: 13px; color: var(--muted); font-weight: 600; margin-bottom: 2px; }
+.back:hover { color: var(--accent); }
+.hero { grid-template-columns: auto 1fr auto; }
+.hero-ctrl { display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
+@media (max-width: 860px) { .hero { grid-template-columns: 1fr; } .hero-ctrl { align-items: center; } }
