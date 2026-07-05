@@ -77,7 +77,11 @@ func main() {
 		go refreshLoop(store, router, log) // capte les changements externes
 	}
 
-	gw, err := proxy.New(cfg, chain, log, store, router, notif)
+	// Configuration modifiable à chaud (mode, seuil, catégories, blocklist),
+	// initialisée depuis le fichier puis l'état persisté en base.
+	settings := proxy.NewSettings(cfg.Mode, cfg.Threshold, store)
+
+	gw, err := proxy.New(cfg, chain, log, store, router, notif, settings)
 	if err != nil {
 		log.Error("initialisation passerelle", "err", err)
 		os.Exit(1)
@@ -86,7 +90,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/_sentinel/health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{
-			"status": "ok", "mode": cfg.Mode,
+			"status": "ok", "mode": settings.Mode(),
 			"persistence": store != nil, "apps": router.Count(),
 		})
 	})
@@ -128,6 +132,56 @@ func main() {
 			return
 		}
 		writeJSON(w, a)
+	})
+
+	// --- Configuration dynamique (mode, seuil, catégories) ---
+	mux.HandleFunc("/_sentinel/settings", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			writeJSON(w, settings.Snapshot())
+		case http.MethodPost:
+			var body struct {
+				Mode              *string  `json:"mode"`
+				Threshold         *int     `json:"threshold"`
+				EnabledCategories *[]string `json:"enabled_categories"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				http.Error(w, "corps JSON invalide", http.StatusBadRequest)
+				return
+			}
+			if body.Mode != nil {
+				settings.SetMode(*body.Mode)
+			}
+			if body.Threshold != nil {
+				settings.SetThreshold(*body.Threshold)
+			}
+			if body.EnabledCategories != nil {
+				settings.SetCategories(*body.EnabledCategories)
+			}
+			writeJSON(w, settings.Snapshot())
+		default:
+			http.Error(w, "méthode non supportée", http.StatusMethodNotAllowed)
+		}
+	})
+
+	// --- Blocklist d'IP pilotable ---
+	mux.HandleFunc("/_sentinel/blocklist", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			var body struct {
+				IP     string `json:"ip"`
+				Action string `json:"action"` // "add" | "remove"
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				http.Error(w, "corps JSON invalide", http.StatusBadRequest)
+				return
+			}
+			if body.Action == "remove" {
+				settings.Unblock(body.IP)
+			} else {
+				settings.Block(body.IP)
+			}
+		}
+		writeJSON(w, map[string]any{"blocklist": settings.Snapshot()["blocklist"]})
 	})
 
 	// --- Gestion des applications surveillées (multi-app) ---

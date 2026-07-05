@@ -36,14 +36,15 @@ type Gateway struct {
 	chain    *detector.Chain
 	rp       *httputil.ReverseProxy // upstream par défaut (repli)
 	router   *Router                // routage multi-application par domaine
+	settings *Settings              // configuration modifiable à chaud
 	log      *slog.Logger
-	store    *storage.Store  // peut être nil : le WAF fonctionne sans persistance
-	notifier *notifier.Slack // peut être nil : le WAF fonctionne sans alertes
+	store    *storage.Store
+	notifier *notifier.Slack
 	Stats    Stats
 }
 
 // New construit la passerelle. store et notif peuvent être nil.
-func New(cfg config.Config, chain *detector.Chain, log *slog.Logger, store *storage.Store, router *Router, notif *notifier.Slack) (*Gateway, error) {
+func New(cfg config.Config, chain *detector.Chain, log *slog.Logger, store *storage.Store, router *Router, notif *notifier.Slack, settings *Settings) (*Gateway, error) {
 	target, err := url.Parse(cfg.Upstream)
 	if err != nil {
 		return nil, err
@@ -56,8 +57,11 @@ func New(cfg config.Config, chain *detector.Chain, log *slog.Logger, store *stor
 	if router == nil {
 		router = NewRouter()
 	}
-	return &Gateway{cfg: cfg, chain: chain, rp: rp, router: router, log: log, store: store, notifier: notif}, nil
+	return &Gateway{cfg: cfg, chain: chain, rp: rp, router: router, settings: settings, log: log, store: store, notifier: notif}, nil
 }
+
+// Settings expose la configuration dynamique (pour l'API de contrôle).
+func (g *Gateway) Settings() *Settings { return g.settings }
 
 // ServeHTTP implémente http.Handler : c'est le pipeline WAF complet.
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -69,10 +73,10 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	r.ContentLength = int64(len(body))
 
-	// Routage : quelle application est visée ? (par l'en-tête Host)
-	// Si une application correspond, on applique SA politique (mode + seuil) et
-	// on transmet à SON backend. Sinon, repli sur l'upstream par défaut.
-	mode, threshold := g.cfg.Mode, g.cfg.Threshold
+	ip := clientIP(r)
+
+	// Politique globale modifiable à chaud (mode + seuil), surchargée par appli.
+	mode, threshold := g.settings.Mode(), g.settings.Threshold()
 	upstream := g.rp
 	appName := "default"
 	if t, ok := g.router.Match(r.Host); ok {
@@ -81,14 +85,22 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		appName = t.App.Name
 	}
 
-	result := g.chain.Inspect(req)
-	verdict := g.decide(result.Score, mode, threshold)
+	// Blocklist : une IP bannie est bloquée immédiatement, sans inspection.
+	var result detector.Result
+	var verdict string
+	if g.settings.IsBlocked(ip) {
+		result = detector.Result{Categories: []string{"blocklist"}, Score: 99}
+		verdict = "blocked"
+	} else {
+		result = g.filter(g.chain.Inspect(req))
+		verdict = g.decide(result.Score, mode, threshold)
+	}
 	latency := time.Since(start).Microseconds()
 
 	g.log.Info("request",
 		"app", appName,
 		"host", r.Host,
-		"ip", clientIP(r),
+		"ip", ip,
 		"method", req.Method,
 		"path", req.Path,
 		"verdict", verdict,
@@ -100,7 +112,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Persistance asynchrone (ne bloque jamais le trafic ; ignorée si store nil).
 	g.store.Log(storage.Event{
-		ClientIP:   clientIP(r),
+		ClientIP:   ip,
 		Method:     req.Method,
 		Path:       req.Path,
 		Verdict:    verdict,
@@ -113,7 +125,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Alerte Slack (agrégée, non bloquante) dès qu'une attaque est traitée.
 	if verdict != "allowed" {
 		g.notifier.Notify(notifier.Alert{
-			ClientIP:   clientIP(r),
+			ClientIP:   ip,
 			Path:       req.Path,
 			Verdict:    verdict,
 			Categories: result.Categories,
@@ -141,6 +153,27 @@ func (g *Gateway) decide(score int, mode string, threshold int) string {
 		return "blocked"
 	}
 	return "detected"
+}
+
+// filter écarte les détections dont la catégorie est désactivée, et recalcule
+// le score et la liste des catégories en conséquence.
+func (g *Gateway) filter(res detector.Result) detector.Result {
+	kept := res.Findings[:0]
+	score := 0
+	catset := map[string]struct{}{}
+	for _, f := range res.Findings {
+		if !g.settings.Enabled(f.Category) {
+			continue
+		}
+		kept = append(kept, f)
+		score += f.Severity
+		catset[f.Category] = struct{}{}
+	}
+	cats := make([]string, 0, len(catset))
+	for c := range catset {
+		cats = append(cats, c)
+	}
+	return detector.Result{Findings: kept, Categories: cats, Score: score}
 }
 
 func (g *Gateway) writeBlock(w http.ResponseWriter, res detector.Result) {

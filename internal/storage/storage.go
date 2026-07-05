@@ -65,6 +65,11 @@ CREATE TABLE IF NOT EXISTS applications (
 );
 -- pour les bases créées avant l'ajout du routage par domaine
 ALTER TABLE applications ADD COLUMN IF NOT EXISTS domain TEXT NOT NULL DEFAULT '';
+
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value JSONB NOT NULL
+);
 `
 
 // Open établit la connexion, vérifie qu'elle répond et applique le schéma.
@@ -245,6 +250,37 @@ func (s *Store) AddApp(a App) (App, error) {
 func (s *Store) DeleteApp(id int64) error {
 	_, err := s.db.Exec(`DELETE FROM applications WHERE id = $1`, id)
 	return err
+}
+
+// SaveSetting persiste une valeur de configuration (sérialisée en JSON).
+func (s *Store) SaveSetting(key string, v any) error {
+	if s == nil {
+		return nil
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(
+		`INSERT INTO settings (key, value) VALUES ($1, $2)
+		 ON CONFLICT (key) DO UPDATE SET value = $2`, key, string(b))
+	return err
+}
+
+// LoadSetting lit une valeur de configuration dans dest. found=false si absente.
+func (s *Store) LoadSetting(key string, dest any) (bool, error) {
+	if s == nil {
+		return false, nil
+	}
+	var val string
+	err := s.db.QueryRow(`SELECT value FROM settings WHERE key = $1`, key).Scan(&val)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, json.Unmarshal([]byte(val), dest)
 }
 
 // Analytics renvoie toutes les agrégations nécessaires au tableau de bord SOC,

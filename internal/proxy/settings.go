@@ -1,0 +1,173 @@
+package proxy
+
+import (
+	"sort"
+	"sync"
+
+	"sentinel-waf/internal/detector"
+	"sentinel-waf/internal/storage"
+)
+
+// Settings porte la configuration MODIFIABLE À CHAUD du WAF : mode et seuil
+// globaux, catégories de détection activées, et blocklist d'IP. L'état est
+// protégé pour l'accès concurrent et persisté en base (survit au redémarrage).
+type Settings struct {
+	mu        sync.RWMutex
+	mode      string
+	threshold int
+	enabled   map[string]bool
+	blocklist map[string]bool
+	store     *storage.Store
+}
+
+// NewSettings initialise depuis la config, puis écrase avec l'état persisté
+// s'il existe. Par défaut, toutes les catégories sont activées.
+func NewSettings(mode string, threshold int, store *storage.Store) *Settings {
+	s := &Settings{
+		mode: mode, threshold: threshold,
+		enabled:   map[string]bool{},
+		blocklist: map[string]bool{},
+		store:     store,
+	}
+	for cat := range detector.Categories {
+		s.enabled[cat] = true
+	}
+	s.load()
+	return s
+}
+
+func (s *Settings) load() {
+	if s.store == nil {
+		return
+	}
+	var mode string
+	if ok, _ := s.store.LoadSetting("mode", &mode); ok && mode != "" {
+		s.mode = mode
+	}
+	var thr int
+	if ok, _ := s.store.LoadSetting("threshold", &thr); ok && thr > 0 {
+		s.threshold = thr
+	}
+	var enabled []string
+	if ok, _ := s.store.LoadSetting("enabled_categories", &enabled); ok {
+		s.enabled = map[string]bool{}
+		for _, c := range enabled {
+			if _, valid := detector.Categories[c]; valid {
+				s.enabled[c] = true
+			}
+		}
+	}
+	var bl []string
+	if ok, _ := s.store.LoadSetting("blocklist", &bl); ok {
+		s.blocklist = map[string]bool{}
+		for _, ip := range bl {
+			s.blocklist[ip] = true
+		}
+	}
+}
+
+// ---- Lectures (chemin chaud, RLock) ----
+
+func (s *Settings) Mode() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.mode
+}
+
+func (s *Settings) Threshold() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.threshold
+}
+
+func (s *Settings) Enabled(cat string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.enabled[cat]
+}
+
+func (s *Settings) IsBlocked(ip string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.blocklist[ip]
+}
+
+// ---- Écritures (persistées) ----
+
+func (s *Settings) SetMode(mode string) {
+	if mode != "block" && mode != "detect" {
+		return
+	}
+	s.mu.Lock()
+	s.mode = mode
+	s.mu.Unlock()
+	_ = s.store.SaveSetting("mode", mode)
+}
+
+func (s *Settings) SetThreshold(n int) {
+	if n < 1 {
+		n = 1
+	}
+	s.mu.Lock()
+	s.threshold = n
+	s.mu.Unlock()
+	_ = s.store.SaveSetting("threshold", n)
+}
+
+func (s *Settings) SetCategories(cats []string) {
+	next := map[string]bool{}
+	for _, c := range cats {
+		if _, valid := detector.Categories[c]; valid {
+			next[c] = true
+		}
+	}
+	s.mu.Lock()
+	s.enabled = next
+	s.mu.Unlock()
+	_ = s.store.SaveSetting("enabled_categories", cats)
+}
+
+func (s *Settings) Block(ip string)   { s.setBlock(ip, true) }
+func (s *Settings) Unblock(ip string) { s.setBlock(ip, false) }
+
+func (s *Settings) setBlock(ip string, on bool) {
+	if ip == "" {
+		return
+	}
+	s.mu.Lock()
+	if on {
+		s.blocklist[ip] = true
+	} else {
+		delete(s.blocklist, ip)
+	}
+	list := make([]string, 0, len(s.blocklist))
+	for k := range s.blocklist {
+		list = append(list, k)
+	}
+	s.mu.Unlock()
+	sort.Strings(list)
+	_ = s.store.SaveSetting("blocklist", list)
+}
+
+// Snapshot renvoie l'état complet pour l'API (lecture atomique).
+func (s *Settings) Snapshot() map[string]any {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	en := make([]string, 0, len(s.enabled))
+	for c := range s.enabled {
+		en = append(en, c)
+	}
+	sort.Strings(en)
+	bl := make([]string, 0, len(s.blocklist))
+	for ip := range s.blocklist {
+		bl = append(bl, ip)
+	}
+	sort.Strings(bl)
+	return map[string]any{
+		"mode":               s.mode,
+		"threshold":          s.threshold,
+		"enabled_categories": en,
+		"all_categories":     detector.Categories,
+		"blocklist":          bl,
+	}
+}

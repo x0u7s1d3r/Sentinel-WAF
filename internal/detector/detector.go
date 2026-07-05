@@ -34,6 +34,18 @@ type Result struct {
 	Score      int       `json:"score"`
 }
 
+// Categories : catalogue des familles de détection (clé -> libellé lisible).
+// Sert à l'API de configuration (activer/désactiver) et au dashboard.
+var Categories = map[string]string{
+	"sqli":           "Injection SQL",
+	"xss":            "Cross-Site Scripting",
+	"path_traversal": "Traversée de répertoire",
+	"cmd_injection":  "Injection de commande",
+	"ssrf":           "Server-Side Request Forgery",
+	"nosql":          "Injection NoSQL",
+	"scanner":        "Scanner / Outil offensif",
+}
+
 // Detector est le contrat que tout moteur doit respecter.
 type Detector interface {
 	// Name identifie le moteur (pour les logs/plugins).
