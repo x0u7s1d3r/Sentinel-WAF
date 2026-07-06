@@ -49,13 +49,14 @@ func (s *Settings) load() {
 	if ok, _ := s.store.LoadSetting("threshold", &thr); ok && thr > 0 {
 		s.threshold = thr
 	}
-	var enabled []string
-	if ok, _ := s.store.LoadSetting("enabled_categories", &enabled); ok {
-		s.enabled = map[string]bool{}
-		for _, c := range enabled {
-			if _, valid := detector.Categories[c]; valid {
-				s.enabled[c] = true
-			}
+	// Modèle opt-out : toutes les catégories sont actives par défaut (initialisé
+	// dans NewSettings) ; on ne persiste que celles EXPLICITEMENT désactivées.
+	// Ainsi, toute nouvelle famille de détection ajoutée par la suite est active
+	// d'office, sans être exclue par une ancienne liste enregistrée.
+	var disabled []string
+	if ok, _ := s.store.LoadSetting("disabled_categories", &disabled); ok {
+		for _, c := range disabled {
+			s.enabled[c] = false
 		}
 	}
 	var bl []string
@@ -119,17 +120,29 @@ func (s *Settings) SetThreshold(n int) {
 	_ = s.store.SaveSetting("threshold", n)
 }
 
+// SetCategories reçoit la liste des catégories ACTIVES (depuis l'UI) et persiste
+// l'inverse : la liste des DÉSACTIVÉES. Toute catégorie absente des deux (une
+// nouveauté future) reste active par défaut.
 func (s *Settings) SetCategories(cats []string) {
-	next := map[string]bool{}
+	want := map[string]bool{}
 	for _, c := range cats {
 		if _, valid := detector.Categories[c]; valid {
-			next[c] = true
+			want[c] = true
 		}
 	}
+	next := map[string]bool{}
+	var disabled []string
+	for cat := range detector.Categories {
+		next[cat] = want[cat]
+		if !want[cat] {
+			disabled = append(disabled, cat)
+		}
+	}
+	sort.Strings(disabled)
 	s.mu.Lock()
 	s.enabled = next
 	s.mu.Unlock()
-	_ = s.store.SaveSetting("enabled_categories", cats)
+	_ = s.store.SaveSetting("disabled_categories", disabled)
 }
 
 func (s *Settings) Block(ip string)   { s.setBlock(ip, true) }
