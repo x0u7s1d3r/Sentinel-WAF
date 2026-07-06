@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sort"
+	"sync"
 	"time"
 )
 
@@ -28,7 +29,10 @@ type Alert struct {
 }
 
 // Slack agrège et envoie les alertes à un webhook Slack (Incoming Webhook).
+// Le webhook est modifiable à chaud (depuis le dashboard) : le notificateur
+// existe toujours, et n'envoie que lorsqu'un webhook est configuré.
 type Slack struct {
+	mu       sync.RWMutex
 	webhook  string
 	interval time.Duration
 	ch       chan Alert
@@ -37,12 +41,9 @@ type Slack struct {
 	client   *http.Client
 }
 
-// NewSlack crée le notificateur. Si webhook est vide, renvoie nil : les appels
-// à Notify seront alors des non-opérations (le WAF fonctionne sans Slack).
+// NewSlack crée le notificateur. Il tourne toujours (même sans webhook) ; sans
+// webhook configuré, les envois sont simplement ignorés.
 func NewSlack(webhook string, interval time.Duration, log *slog.Logger) *Slack {
-	if webhook == "" {
-		return nil
-	}
 	if interval <= 0 {
 		interval = 15 * time.Second
 	}
@@ -56,6 +57,59 @@ func NewSlack(webhook string, interval time.Duration, log *slog.Logger) *Slack {
 	}
 	go s.worker()
 	return s
+}
+
+// SetWebhook change le webhook à chaud (vide = désactive les alertes).
+func (s *Slack) SetWebhook(url string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.webhook = url
+	s.mu.Unlock()
+}
+
+// Configured indique si un webhook est actuellement défini.
+func (s *Slack) Configured() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.webhook != ""
+}
+
+func (s *Slack) currentWebhook() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.webhook
+}
+
+// Test envoie immédiatement un message de vérification (hors agrégation).
+// Renvoie une erreur si aucun webhook n'est configuré ou si l'envoi échoue.
+func (s *Slack) Test() error {
+	if s == nil {
+		return fmt.Errorf("notificateur indisponible")
+	}
+	url := s.currentWebhook()
+	if url == "" {
+		return fmt.Errorf("aucun webhook Slack configuré")
+	}
+	return s.post(url, "🛡️ *Sentinel WAF* — message de test. Les alertes sont bien configurées ✅")
+}
+
+// post envoie un texte au webhook et renvoie une erreur en cas d'échec.
+func (s *Slack) post(url, text string) error {
+	payload, _ := json.Marshal(map[string]string{"text": text})
+	resp, err := s.client.Post(url, "application/json", bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("Slack a répondu HTTP %d", resp.StatusCode)
+	}
+	return nil
 }
 
 // Notify met une alerte en file sans bloquer (abandonnée si la file est pleine).
@@ -111,8 +165,13 @@ func (s *Slack) worker() {
 	}
 }
 
-// flush construit un message de synthèse et l'envoie.
+// flush construit un message de synthèse et l'envoie (ignoré si pas de webhook).
 func (s *Slack) flush(alerts []Alert) {
+	url := s.currentWebhook()
+	if url == "" {
+		return // aucun webhook : on abandonne silencieusement le lot
+	}
+
 	blocked, detected := 0, 0
 	byCat := map[string]int{}
 	byIP := map[string]int{}
@@ -138,15 +197,8 @@ func (s *Slack) flush(alerts []Alert) {
 		text += "• Top IP : " + topCounts(byIP, 5)
 	}
 
-	payload, _ := json.Marshal(map[string]string{"text": text})
-	resp, err := s.client.Post(s.webhook, "application/json", bytes.NewReader(payload))
-	if err != nil {
+	if err := s.post(url, text); err != nil {
 		s.log.Warn("envoi alerte Slack échoué", "err", err)
-		return
-	}
-	_ = resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		s.log.Warn("Slack a refusé l'alerte", "status", resp.StatusCode)
 	}
 }
 

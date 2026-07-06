@@ -390,3 +390,4 @@ a { color: inherit; text-decoration: none; }
 .hero { grid-template-columns: auto 1fr auto; }
 .hero-ctrl { display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
 @media (max-width: 860px) { .hero { grid-template-columns: 1fr; } .hero-ctrl { align-items: center; } }
+.hint.ok-hint { color: var(--safe); font-weight: 600; }

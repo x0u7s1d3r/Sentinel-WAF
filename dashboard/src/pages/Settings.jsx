@@ -5,6 +5,9 @@ import { api, CATEGORIES } from '../api.js'
 export default function Settings() {
   const { settings, refresh } = useOutletContext()
   const [ipInput, setIpInput] = useState('')
+  const [webhook, setWebhook] = useState('')
+  const [slackMsg, setSlackMsg] = useState(null)
+  const [slackBusy, setSlackBusy] = useState(false)
   const s = settings || {}
   const enabled = new Set(s.enabled_categories || [])
   const blocklist = s.blocklist || []
@@ -26,6 +29,29 @@ export default function Settings() {
     await api.blocklist(ipInput.trim(), 'add'); setIpInput(''); refresh()
   }
   async function removeIp(ip) { await api.blocklist(ip, 'remove'); refresh() }
+
+  async function saveWebhook() {
+    setSlackBusy(true); setSlackMsg(null)
+    try {
+      await api.setSettings({ slack_webhook: webhook.trim() })
+      setWebhook('')
+      setSlackMsg({ ok: true, text: webhook.trim() ? 'Webhook enregistré.' : 'Webhook retiré.' })
+      refresh()
+    } catch (e) {
+      setSlackMsg({ ok: false, text: String(e.message || e).slice(0, 140) })
+    } finally { setSlackBusy(false) }
+  }
+  async function testSlack() {
+    setSlackBusy(true); setSlackMsg(null)
+    try {
+      const r = await api.slackTest()
+      setSlackMsg(r.ok
+        ? { ok: true, text: 'Message de test envoyé ✅ Vérifiez votre canal Slack.' }
+        : { ok: false, text: r.error || 'Échec de l’envoi.' })
+    } catch (e) {
+      setSlackMsg({ ok: false, text: String(e.message || e).slice(0, 140) })
+    } finally { setSlackBusy(false) }
+  }
 
   return (
     <div className="settings">
@@ -97,6 +123,33 @@ export default function Settings() {
                 aria-label={`Activer ${name}`} />
             </div>
           ))}
+        </div>
+      </div>
+      {/* Alertes Slack */}
+      <div className="card" style={{ marginTop: 18 }}>
+        <div className="card-h">
+          <h3>Alertes Slack</h3>
+          <span className={`hint ${s.slack_webhook_set ? 'ok-hint' : ''}`}>
+            {s.slack_webhook_set ? '● Configuré' : '○ Non configuré'}
+          </span>
+        </div>
+        <div className="card-b">
+          <div className="field-h" style={{ marginTop: 0, marginBottom: 12 }}>
+            Recevez un résumé des attaques dans votre canal Slack. Créez un
+            « Incoming Webhook » sur api.slack.com/apps, puis collez son URL ici.
+            {s.slack_webhook_set && ' Un webhook est déjà enregistré ; saisissez-en un nouveau pour le remplacer, ou laissez vide et enregistrez pour le retirer.'}
+          </div>
+          <div className="bl-input">
+            <input type="password" value={webhook} onChange={(e) => setWebhook(e.target.value)}
+              placeholder={s.slack_webhook_set ? '•••••••• (webhook enregistré)' : 'https://hooks.slack.com/services/…'} />
+            <button className="btn accent" onClick={saveWebhook} disabled={slackBusy}>Enregistrer</button>
+            <button className="btn" onClick={testSlack} disabled={slackBusy || !s.slack_webhook_set}>Tester</button>
+          </div>
+          {slackMsg && (
+            <div style={{ fontSize: 12, marginTop: 10, color: slackMsg.ok ? 'var(--safe)' : 'var(--threat)' }}>
+              {slackMsg.text}
+            </div>
+          )}
         </div>
       </div>
     </div>

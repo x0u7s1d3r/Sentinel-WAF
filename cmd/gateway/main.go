@@ -64,10 +64,22 @@ func main() {
 			alertInterval = time.Duration(n) * time.Second
 		}
 	}
-	notif := notifier.NewSlack(cfg.SlackWebhook, alertInterval, log)
-	if notif != nil {
+	// Configuration modifiable à chaud (mode, seuil, catégories, blocklist,
+	// webhook Slack), initialisée depuis le fichier puis l'état persisté en base.
+	settings := proxy.NewSettings(cfg.Mode, cfg.Threshold, store)
+
+	// Notificateur Slack : le webhook persisté (défini via le dashboard) a la
+	// priorité ; sinon on retombe sur la variable d'environnement.
+	initialWebhook := settings.SlackWebhook()
+	if initialWebhook == "" {
+		initialWebhook = cfg.SlackWebhook
+	}
+	notif := notifier.NewSlack(initialWebhook, alertInterval, log)
+	defer notif.Close()
+	if notif.Configured() {
 		log.Info("alertes Slack activées", "intervalle", alertInterval)
-		defer notif.Close()
+	} else {
+		log.Info("alertes Slack en attente d'un webhook (configurable depuis le dashboard)")
 	}
 
 	// Routeur multi-application : chargé depuis la base, rechargé à chaud.
@@ -76,10 +88,6 @@ func main() {
 	if store != nil {
 		go refreshLoop(store, router, log) // capte les changements externes
 	}
-
-	// Configuration modifiable à chaud (mode, seuil, catégories, blocklist),
-	// initialisée depuis le fichier puis l'état persisté en base.
-	settings := proxy.NewSettings(cfg.Mode, cfg.Threshold, store)
 
 	gw, err := proxy.New(cfg, chain, log, store, router, notif, settings)
 	if err != nil {
@@ -144,6 +152,7 @@ func main() {
 				Mode              *string  `json:"mode"`
 				Threshold         *int     `json:"threshold"`
 				EnabledCategories *[]string `json:"enabled_categories"`
+				SlackWebhook      *string  `json:"slack_webhook"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				http.Error(w, "corps JSON invalide", http.StatusBadRequest)
@@ -158,10 +167,27 @@ func main() {
 			if body.EnabledCategories != nil {
 				settings.SetCategories(*body.EnabledCategories)
 			}
+			if body.SlackWebhook != nil {
+				settings.SetSlackWebhook(*body.SlackWebhook)
+				notif.SetWebhook(*body.SlackWebhook) // applique à chaud
+			}
 			writeJSON(w, settings.Snapshot())
 		default:
 			http.Error(w, "méthode non supportée", http.StatusMethodNotAllowed)
 		}
+	})
+
+	// --- Test d'alerte Slack (envoi immédiat d'un message de vérification) ---
+	mux.HandleFunc("/_sentinel/slack/test", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "méthode non supportée", http.StatusMethodNotAllowed)
+			return
+		}
+		if err := notif.Test(); err != nil {
+			writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true})
 	})
 
 	// --- Blocklist d'IP pilotable ---

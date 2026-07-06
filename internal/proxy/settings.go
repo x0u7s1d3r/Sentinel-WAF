@@ -12,12 +12,13 @@ import (
 // globaux, catégories de détection activées, et blocklist d'IP. L'état est
 // protégé pour l'accès concurrent et persisté en base (survit au redémarrage).
 type Settings struct {
-	mu        sync.RWMutex
-	mode      string
-	threshold int
-	enabled   map[string]bool
-	blocklist map[string]bool
-	store     *storage.Store
+	mu           sync.RWMutex
+	mode         string
+	threshold    int
+	enabled      map[string]bool
+	blocklist    map[string]bool
+	slackWebhook string
+	store        *storage.Store
 }
 
 // NewSettings initialise depuis la config, puis écrase avec l'état persisté
@@ -63,6 +64,10 @@ func (s *Settings) load() {
 		for _, ip := range bl {
 			s.blocklist[ip] = true
 		}
+	}
+	var wh string
+	if ok, _ := s.store.LoadSetting("slack_webhook", &wh); ok {
+		s.slackWebhook = wh
 	}
 }
 
@@ -130,6 +135,21 @@ func (s *Settings) SetCategories(cats []string) {
 func (s *Settings) Block(ip string)   { s.setBlock(ip, true) }
 func (s *Settings) Unblock(ip string) { s.setBlock(ip, false) }
 
+// SlackWebhook renvoie le webhook persisté (pour l'initialisation au démarrage).
+func (s *Settings) SlackWebhook() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.slackWebhook
+}
+
+// SetSlackWebhook enregistre le webhook Slack (persisté).
+func (s *Settings) SetSlackWebhook(url string) {
+	s.mu.Lock()
+	s.slackWebhook = url
+	s.mu.Unlock()
+	_ = s.store.SaveSetting("slack_webhook", url)
+}
+
 func (s *Settings) setBlock(ip string, on bool) {
 	if ip == "" {
 		return
@@ -169,5 +189,6 @@ func (s *Settings) Snapshot() map[string]any {
 		"enabled_categories": en,
 		"all_categories":     detector.Categories,
 		"blocklist":          bl,
+		"slack_webhook_set":  s.slackWebhook != "",
 	}
 }

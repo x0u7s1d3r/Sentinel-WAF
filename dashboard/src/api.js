@@ -26,6 +26,7 @@ export const api = {
   apps: () => get('/apps'),
   settings: () => get('/settings'),
   setSettings: (body) => post('/settings', body),
+  slackTest: () => post('/slack/test', {}),
   blocklist: (ip, action) => post('/blocklist', { ip, action }),
   addApp: (app) => post('/apps', app),
   updateApp: (id, mode, threshold) =>
