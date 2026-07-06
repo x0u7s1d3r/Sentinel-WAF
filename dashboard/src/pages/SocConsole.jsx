@@ -8,10 +8,12 @@ import { api, CATEGORIES } from '../api.js'
 const CAT_COLOR = {
   sqli: '#E23D43', xss: '#D9820A', path_traversal: '#9B8CFF',
   cmd_injection: '#F97316', ssrf: '#2F6FED', nosql: '#0EA5A3', scanner: '#17A34A',
+  sensitive_path: '#EC4899', brute_force: '#8B5CF6', blocklist: '#64748B',
 }
 const CAT_LABEL = {
   sqli: 'SQLi', xss: 'XSS', path_traversal: 'Traversée',
   cmd_injection: 'Commande', ssrf: 'SSRF', nosql: 'NoSQL', scanner: 'Scanner',
+  sensitive_path: 'Chemin sensible', brute_force: 'Force brute', blocklist: 'IP bannie',
 }
 const VERDICT = { blocked: 'BLOQUÉE', detected: 'SURVEIL.', allowed: 'PASSÉE' }
 

@@ -54,6 +54,8 @@ func main() {
 		detector.SQLSemantic{},
 		detector.XSSSemantic{},
 		detector.NewHeuristics(),
+		detector.SensitivePath{},
+		detector.NewBruteForce(),
 	)
 
 	// Alertes Slack (facultatif) : actives seulement si un webhook est fourni

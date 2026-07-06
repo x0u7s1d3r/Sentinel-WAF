@@ -63,4 +63,6 @@ export const CATEGORIES = [
   ['ssrf', 'SSRF', 'Requêtes internes forgées par l’attaquant'],
   ['nosql', 'Injection NoSQL', 'Requêtes NoSQL piégées'],
   ['scanner', 'Scanners', 'Outils d’attaque automatisés (sqlmap, nikto…)'],
+  ['sensitive_path', 'Chemins sensibles', 'Accès à /.env, /admin, /.git, sauvegardes…'],
+  ['brute_force', 'Force brute', 'Tentatives d’authentification répétées'],
 ]

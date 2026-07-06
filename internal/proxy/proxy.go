@@ -74,6 +74,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r.ContentLength = int64(len(body))
 
 	ip := clientIP(r)
+	req.ClientIP = ip // nécessaire au détecteur de force brute
 
 	// Politique globale modifiable à chaud (mode + seuil), surchargée par appli.
 	mode, threshold := g.settings.Mode(), g.settings.Threshold()

@@ -13,6 +13,7 @@ type Request struct {
 	Method    string
 	Path      string
 	UserAgent string
+	ClientIP  string // renseigné par la passerelle (nécessaire au brute-force)
 	// Values regroupe toutes les valeurs à inspecter, déjà décodées :
 	// valeurs et clés des paramètres de query, du corps, et le chemin.
 	Values []string
@@ -20,11 +21,11 @@ type Request struct {
 
 // Finding décrit une détection unitaire.
 type Finding struct {
-	ID          string `json:"id"`          // ex. SEM-SQL-UNION
-	Category    string `json:"category"`    // sqli, xss, ...
-	Name        string `json:"name"`        // description lisible
-	Severity    int    `json:"severity"`    // contribution au score
-	Engine      string `json:"engine"`      // "semantic" | "heuristic"
+	ID       string `json:"id"`       // ex. SEM-SQL-UNION
+	Category string `json:"category"` // sqli, xss, ...
+	Name     string `json:"name"`     // description lisible
+	Severity int    `json:"severity"` // contribution au score
+	Engine   string `json:"engine"`   // "semantic" | "heuristic"
 }
 
 // Result agrège les détections d'un ou plusieurs moteurs.
@@ -44,6 +45,8 @@ var Categories = map[string]string{
 	"ssrf":           "Server-Side Request Forgery",
 	"nosql":          "Injection NoSQL",
 	"scanner":        "Scanner / Outil offensif",
+	"sensitive_path": "Accès à un chemin sensible",
+	"brute_force":    "Attaque par force brute",
 }
 
 // Detector est le contrat que tout moteur doit respecter.
