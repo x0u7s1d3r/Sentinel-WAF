@@ -1,28 +1,44 @@
-// Appels vers l'API de contrôle du WAF. En prod, nginx relaie /_sentinel vers
-// la passerelle (même origine). En dev, Vite fait le proxy (voir vite.config).
+// Client de l'API de contrôle du WAF. Gère l'authentification : le jeton est
+// conservé dans le navigateur et envoyé dans l'en-tête Authorization. Une
+// réponse 401 lève une erreur marquée (status: 401) pour déclencher l'écran
+// de connexion côté application.
 const BASE = '/_sentinel'
+const TOKEN_KEY = 'sentinel_token'
+
+function getToken() { try { return localStorage.getItem(TOKEN_KEY) || '' } catch { return '' } }
+function setToken(t) { try { t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY) } catch { /* ignore */ } }
+
+function headers(extra) {
+  const h = { ...(extra || {}) }
+  const t = getToken()
+  if (t) h['Authorization'] = 'Bearer ' + t
+  return h
+}
+
+function unauthorized() { const e = new Error('non autorisé'); e.status = 401; return e }
 
 async function get(path) {
-  const r = await fetch(BASE + path)
+  const r = await fetch(BASE + path, { headers: headers() })
+  if (r.status === 401) throw unauthorized()
   if (!r.ok) throw new Error(`${path} -> HTTP ${r.status}`)
   return r.json()
 }
 
 async function post(path, body) {
   const r = await fetch(BASE + path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    method: 'POST', headers: headers({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(body),
   })
+  if (r.status === 401) throw unauthorized()
   if (!r.ok) return r.text().then((t) => Promise.reject(new Error(t)))
   return r.json()
 }
 
 export const api = {
   health: () => get('/health'),
-  stats: (app) => get('/stats' + (app ? `?app=${encodeURIComponent(app)}` : '')),
-  events: (app) => get('/events' + (app ? `?app=${encodeURIComponent(app)}` : '')),
-  analytics: (app) => get('/analytics' + (app ? `?app=${encodeURIComponent(app)}` : '')),
+  stats: () => get('/stats'),
+  events: () => get('/events'),
+  analytics: () => get('/analytics'),
   apps: () => get('/apps'),
   settings: () => get('/settings'),
   setSettings: (body) => post('/settings', body),
@@ -31,27 +47,33 @@ export const api = {
   addApp: (app) => post('/apps', app),
   updateApp: (id, mode, threshold) =>
     fetch(BASE + '/apps', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'PUT', headers: headers({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ id, mode, threshold }),
     }).then((r) => {
-      if (!r.ok) return r.text().then((t) => Promise.reject(new Error(t)))
-      return r.json()
-    }),
-  updateApp: (id, mode, threshold) =>
-    fetch(`${BASE}/apps`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, mode, threshold }),
-    }).then((r) => {
+      if (r.status === 401) throw unauthorized()
       if (!r.ok) return r.text().then((t) => Promise.reject(new Error(t)))
       return r.json()
     }),
   deleteApp: (id) =>
-    fetch(`${BASE}/apps?id=${id}`, { method: 'DELETE' }).then((r) => {
+    fetch(`${BASE}/apps?id=${id}`, { method: 'DELETE', headers: headers() }).then((r) => {
+      if (r.status === 401) throw unauthorized()
       if (!r.ok) throw new Error(`suppression -> HTTP ${r.status}`)
       return r.json()
     }),
+
+  // --- Authentification ---
+  login: async (password) => {
+    const r = await fetch(BASE + '/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    })
+    const data = await r.json().catch(() => ({}))
+    if (!r.ok) { const e = new Error(data.error || 'échec de connexion'); e.status = r.status; throw e }
+    if (data.token) setToken(data.token)
+    return data
+  },
+  logout: () => setToken(''),
+  hasToken: () => !!getToken(),
 }
 
 // Libellés + descriptions des catégories de détection (ordre d'affichage).

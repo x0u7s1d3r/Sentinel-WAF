@@ -15,9 +15,11 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
+	"sentinel-waf/internal/auth"
 	"sentinel-waf/internal/config"
 	"sentinel-waf/internal/detector"
 	"sentinel-waf/internal/notifier"
@@ -97,12 +99,66 @@ func main() {
 		os.Exit(1)
 	}
 
+	// --- Authentification admin (secret de signature + hachage du mot de passe) ---
+	var authSecret []byte
+	var adminHash string
+	if store != nil {
+		var sec string
+		if ok, _ := store.LoadSetting("auth_secret", &sec); ok && sec != "" {
+			authSecret = auth.DecodeSecret(sec)
+		} else {
+			sec = auth.NewSecret()
+			_ = store.SaveSetting("auth_secret", sec)
+			authSecret = auth.DecodeSecret(sec)
+		}
+		_, _ = store.LoadSetting("admin_hash", &adminHash)
+	} else {
+		authSecret = auth.DecodeSecret(auth.NewSecret()) // éphémère sans base
+	}
+	// Un mot de passe fourni par l'environnement (re)définit le compte admin.
+	if cfg.AdminPassword != "" {
+		adminHash = auth.HashPassword(cfg.AdminPassword)
+		if store != nil {
+			_ = store.SaveSetting("admin_hash", adminHash)
+		}
+	}
+	authEnabled := adminHash != ""
+	if authEnabled {
+		log.Info("authentification admin activée")
+	} else {
+		log.Warn("dashboard NON protégé — définissez SENTINEL_ADMIN_PASSWORD pour activer l'authentification")
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/_sentinel/health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{
 			"status": "ok", "mode": settings.Mode(),
 			"persistence": store != nil, "apps": router.Count(),
+			"auth_required": authEnabled,
 		})
+	})
+
+	// Connexion : vérifie le mot de passe et délivre un jeton (endpoint ouvert).
+	mux.HandleFunc("/_sentinel/login", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "méthode non supportée", http.StatusMethodNotAllowed)
+			return
+		}
+		var body struct {
+			Password string `json:"password"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if !authEnabled {
+			writeJSON(w, map[string]any{"auth_required": false})
+			return
+		}
+		if !auth.VerifyPassword(body.Password, adminHash) {
+			w.WriteHeader(http.StatusUnauthorized)
+			writeJSON(w, map[string]any{"ok": false, "error": "identifiants invalides"})
+			return
+		}
+		token := auth.IssueToken(authSecret, "admin", 12*time.Hour)
+		writeJSON(w, map[string]any{"ok": true, "token": token})
 	})
 	mux.HandleFunc("/_sentinel/stats", func(w http.ResponseWriter, r *http.Request) {
 		if store != nil {
@@ -151,10 +207,10 @@ func main() {
 			writeJSON(w, settings.Snapshot())
 		case http.MethodPost:
 			var body struct {
-				Mode              *string  `json:"mode"`
-				Threshold         *int     `json:"threshold"`
+				Mode              *string   `json:"mode"`
+				Threshold         *int      `json:"threshold"`
 				EnabledCategories *[]string `json:"enabled_categories"`
-				SlackWebhook      *string  `json:"slack_webhook"`
+				SlackWebhook      *string   `json:"slack_webhook"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				http.Error(w, "corps JSON invalide", http.StatusBadRequest)
@@ -283,7 +339,25 @@ func main() {
 
 	mux.Handle("/", gw)
 
-	srv := &http.Server{Addr: cfg.Listen, Handler: mux}
+	// Middleware d'authentification : protège toute l'API de contrôle
+	// (/_sentinel/*) sauf /login et /health. Le trafic applicatif ("/") passe
+	// par le proxy WAF et n'est jamais concerné. Sans jeton valide -> 401.
+	openPaths := map[string]bool{"/_sentinel/login": true, "/_sentinel/health": true}
+	guarded := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		if authEnabled && strings.HasPrefix(p, "/_sentinel/") && !openPaths[p] {
+			tok := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+			if _, ok := auth.ParseToken(authSecret, tok); !ok {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				_ = json.NewEncoder(w).Encode(map[string]any{"error": "authentification requise"})
+				return
+			}
+		}
+		mux.ServeHTTP(w, r)
+	})
+
+	srv := &http.Server{Addr: cfg.Listen, Handler: guarded}
 	go func() {
 		log.Info("Sentinel WAF — passerelle démarrée",
 			"listen", cfg.Listen, "upstream_defaut", cfg.Upstream, "mode", cfg.Mode,

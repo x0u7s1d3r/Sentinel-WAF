@@ -18,6 +18,7 @@ services:
       # Si .env est absent, les valeurs par défaut désactivent proprement Slack.
       - SENTINEL_SLACK_WEBHOOK=${SENTINEL_SLACK_WEBHOOK:-}
       - SENTINEL_ALERT_INTERVAL_SEC=${SENTINEL_ALERT_INTERVAL_SEC:-15}
+      - SENTINEL_ADMIN_PASSWORD=${SENTINEL_ADMIN_PASSWORD}
     depends_on:
       - demo-target
       - postgres

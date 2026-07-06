@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { api } from './api.js'
+import Login from './pages/Login.jsx'
 
 export default function App() {
   const [data, setData] = useState({
     health: null, stats: null, events: [], apps: [], analytics: null,
     settings: null, connected: null,
   })
+  const [needAuth, setNeedAuth] = useState(false)
 
   async function refresh() {
     try {
@@ -22,8 +24,10 @@ export default function App() {
         apps: appsRes.apps || [],
         analytics, settings, connected: true,
       })
-    } catch {
-      setData((d) => ({ ...d, connected: false }))
+      setNeedAuth(false)
+    } catch (e) {
+      if (e && e.status === 401) setNeedAuth(true)
+      else setData((d) => ({ ...d, connected: false }))
     }
   }
 
@@ -33,7 +37,13 @@ export default function App() {
     return () => clearInterval(id)
   }, [])
 
+  if (needAuth) {
+    return <Login onSuccess={() => { setNeedAuth(false); refresh() }} />
+  }
+
   const mode = data.settings?.mode || data.health?.mode || 'block'
+
+  function logout() { api.logout(); setNeedAuth(true) }
 
   return (
     <div className="shell">
@@ -62,6 +72,9 @@ export default function App() {
           <span className="dot" />
           {mode === 'block' ? 'Mode blocage' : 'Mode surveillance'}
         </div>
+        {data.health?.auth_required && api.hasToken() && (
+          <button className="btn mini logout-btn" onClick={logout} title="Se déconnecter">Déconnexion</button>
+        )}
       </header>
 
       {data.connected === false ? (

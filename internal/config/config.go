@@ -25,6 +25,10 @@ type Config struct {
 	// Webhook Slack pour les alertes. SECRET : à fournir par l'environnement
 	// (SENTINEL_SLACK_WEBHOOK), jamais en dur dans un fichier versionné.
 	SlackWebhook string `json:"-"`
+	// Mot de passe admin initial. SECRET : fourni par l'environnement
+	// (SENTINEL_ADMIN_PASSWORD). Sert à créer/réinitialiser le compte ; seul
+	// son hachage est stocké, jamais le mot de passe en clair.
+	AdminPassword string `json:"-"`
 }
 
 // Default fournit une configuration raisonnable si aucun fichier n'est fourni.
@@ -83,5 +87,8 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("SENTINEL_SLACK_WEBHOOK"); v != "" {
 		cfg.SlackWebhook = v
+	}
+	if v := os.Getenv("SENTINEL_ADMIN_PASSWORD"); v != "" {
+		cfg.AdminPassword = v
 	}
 }
