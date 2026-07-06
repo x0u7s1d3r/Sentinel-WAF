@@ -39,6 +39,12 @@ services:
     depends_on:
       - gateway
     restart: unless-stopped
+  
+  dvwa:
+    image: vulnerables/web-dvwa
+    container_name: dvwa
+    restart: unless-stopped
+    # pas de "ports:" — le WAF y accède en interne via http://dvwa:80
 
   # --- Couche de données (prête, câblage au sprint stockage) ---
   postgres:
@@ -57,3 +63,5 @@ services:
 
 volumes:
   pgdata:
+
+
