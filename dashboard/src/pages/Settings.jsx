@@ -8,6 +8,11 @@ export default function Settings() {
   const [webhook, setWebhook] = useState('')
   const [slackMsg, setSlackMsg] = useState(null)
   const [slackBusy, setSlackBusy] = useState(false)
+  const [pwOld, setPwOld] = useState('')
+  const [pwNew, setPwNew] = useState('')
+  const [pwConfirm, setPwConfirm] = useState('')
+  const [pwMsg, setPwMsg] = useState(null)
+  const [pwBusy, setPwBusy] = useState(false)
   const s = settings || {}
   const enabled = new Set(s.enabled_categories || [])
   const blocklist = s.blocklist || []
@@ -51,6 +56,20 @@ export default function Settings() {
     } catch (e) {
       setSlackMsg({ ok: false, text: String(e.message || e).slice(0, 140) })
     } finally { setSlackBusy(false) }
+  }
+
+  async function changePassword() {
+    setPwMsg(null)
+    if (pwNew.length < 6) { setPwMsg({ ok: false, text: '6 caractères minimum.' }); return }
+    if (pwNew !== pwConfirm) { setPwMsg({ ok: false, text: 'La confirmation ne correspond pas.' }); return }
+    setPwBusy(true)
+    try {
+      await api.changePassword(pwOld, pwNew)
+      setPwOld(''); setPwNew(''); setPwConfirm('')
+      setPwMsg({ ok: true, text: 'Mot de passe modifié.' })
+    } catch (e) {
+      setPwMsg({ ok: false, text: e.status === 401 ? 'Mot de passe actuel incorrect.' : String(e.message || e).slice(0, 140) })
+    } finally { setPwBusy(false) }
   }
 
   return (
@@ -150,6 +169,37 @@ export default function Settings() {
               {slackMsg.text}
             </div>
           )}
+        </div>
+      </div>
+      {/* Compte administrateur */}
+      <div className="card" style={{ marginTop: 18 }}>
+        <div className="card-h"><h3>Compte administrateur</h3></div>
+        <div className="card-b">
+          <div className="field-h" style={{ marginTop: 0, marginBottom: 12 }}>
+            Changez le mot de passe de la console. L'ancien mot de passe est requis.
+          </div>
+          <div className="form">
+            <div className="full">
+              <label>Mot de passe actuel</label>
+              <input type="password" value={pwOld} onChange={(e) => setPwOld(e.target.value)} placeholder="••••••••" />
+            </div>
+            <div>
+              <label>Nouveau mot de passe</label>
+              <input type="password" value={pwNew} onChange={(e) => setPwNew(e.target.value)} placeholder="6 caractères min." />
+            </div>
+            <div>
+              <label>Confirmer</label>
+              <input type="password" value={pwConfirm} onChange={(e) => setPwConfirm(e.target.value)} placeholder="Répéter" />
+            </div>
+            {pwMsg && (
+              <div className="full" style={{ fontSize: 12, color: pwMsg.ok ? 'var(--safe)' : 'var(--threat)' }}>{pwMsg.text}</div>
+            )}
+            <div className="full">
+              <button className="btn accent" onClick={changePassword} disabled={pwBusy}>
+                {pwBusy ? 'Modification…' : 'Changer le mot de passe'}
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     </div>

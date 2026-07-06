@@ -62,6 +62,16 @@ export const api = {
     }),
 
   // --- Authentification ---
+  setup: async (password) => {
+    const r = await fetch(BASE + '/setup', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    })
+    const data = await r.json().catch(() => ({}))
+    if (!r.ok) { const e = new Error(data.error || 'échec de création'); e.status = r.status; throw e }
+    if (data.token) setToken(data.token)
+    return data
+  },
   login: async (password) => {
     const r = await fetch(BASE + '/login', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -72,6 +82,7 @@ export const api = {
     if (data.token) setToken(data.token)
     return data
   },
+  changePassword: (oldPw, newPw) => post('/password', { old: oldPw, new: newPw }),
   logout: () => setToken(''),
   hasToken: () => !!getToken(),
 }

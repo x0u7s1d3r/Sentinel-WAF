@@ -2,18 +2,33 @@ import { useEffect, useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { api } from './api.js'
 import Login from './pages/Login.jsx'
+import CreateAccount from './pages/CreateAccount.jsx'
 
 export default function App() {
   const [data, setData] = useState({
     health: null, stats: null, events: [], apps: [], analytics: null,
     settings: null, connected: null,
   })
-  const [needAuth, setNeedAuth] = useState(false)
+  // screen: 'ready' | 'login' | 'setup'
+  const [screen, setScreen] = useState('ready')
 
   async function refresh() {
+    let health
     try {
-      const [health, stats, eventsRes, appsRes, analytics, settings] = await Promise.all([
-        api.health(), api.stats(), api.events(),
+      health = await api.health() // ouvert : indique si un compte existe
+    } catch {
+      setData((d) => ({ ...d, connected: false }))
+      return
+    }
+    // Aucun compte -> écran de création (sécurisé par défaut).
+    if (!health.account_exists) {
+      setScreen('setup')
+      setData((d) => ({ ...d, health, connected: true }))
+      return
+    }
+    try {
+      const [stats, eventsRes, appsRes, analytics, settings] = await Promise.all([
+        api.stats(), api.events(),
         api.apps().catch(() => ({ apps: [] })),
         api.analytics().catch(() => null),
         api.settings().catch(() => null),
@@ -24,9 +39,9 @@ export default function App() {
         apps: appsRes.apps || [],
         analytics, settings, connected: true,
       })
-      setNeedAuth(false)
+      setScreen('ready')
     } catch (e) {
-      if (e && e.status === 401) setNeedAuth(true)
+      if (e && e.status === 401) setScreen('login')
       else setData((d) => ({ ...d, connected: false }))
     }
   }
@@ -37,13 +52,11 @@ export default function App() {
     return () => clearInterval(id)
   }, [])
 
-  if (needAuth) {
-    return <Login onSuccess={() => { setNeedAuth(false); refresh() }} />
-  }
+  if (screen === 'setup') return <CreateAccount onSuccess={() => { setScreen('ready'); refresh() }} />
+  if (screen === 'login') return <Login onSuccess={() => { setScreen('ready'); refresh() }} />
 
   const mode = data.settings?.mode || data.health?.mode || 'block'
-
-  function logout() { api.logout(); setNeedAuth(true) }
+  function logout() { api.logout(); setScreen('login') }
 
   return (
     <div className="shell">
@@ -72,7 +85,7 @@ export default function App() {
           <span className="dot" />
           {mode === 'block' ? 'Mode blocage' : 'Mode surveillance'}
         </div>
-        {data.health?.auth_required && api.hasToken() && (
+        {api.hasToken() && (
           <button className="btn mini logout-btn" onClick={logout} title="Se déconnecter">Déconnexion</button>
         )}
       </header>

@@ -115,18 +115,20 @@ func main() {
 	} else {
 		authSecret = auth.DecodeSecret(auth.NewSecret()) // éphémère sans base
 	}
-	// Un mot de passe fourni par l'environnement (re)définit le compte admin.
-	if cfg.AdminPassword != "" {
-		adminHash = auth.HashPassword(cfg.AdminPassword)
+	admin := auth.NewAdmin(adminHash, authSecret, func(h string) {
 		if store != nil {
-			_ = store.SaveSetting("admin_hash", adminHash)
+			_ = store.SaveSetting("admin_hash", h)
 		}
+	})
+	// Un mot de passe fourni par l'environnement (re)définit le compte admin
+	// (utile pour réinitialiser un mot de passe oublié).
+	if cfg.AdminPassword != "" {
+		admin.SetPassword(cfg.AdminPassword)
 	}
-	authEnabled := adminHash != ""
-	if authEnabled {
-		log.Info("authentification admin activée")
+	if admin.Enabled() {
+		log.Info("authentification admin active")
 	} else {
-		log.Warn("dashboard NON protégé — définissez SENTINEL_ADMIN_PASSWORD pour activer l'authentification")
+		log.Warn("aucun compte admin — création requise au premier accès au dashboard")
 	}
 
 	mux := http.NewServeMux()
@@ -134,8 +136,35 @@ func main() {
 		writeJSON(w, map[string]any{
 			"status": "ok", "mode": settings.Mode(),
 			"persistence": store != nil, "apps": router.Count(),
-			"auth_required": authEnabled,
+			"auth_required":  admin.Enabled(),
+			"account_exists": admin.Enabled(),
 		})
+	})
+
+	// Création du compte admin au premier lancement (ouvert tant qu'aucun compte
+	// n'existe ; refusé ensuite). Délivre un jeton pour connecter immédiatement.
+	mux.HandleFunc("/_sentinel/setup", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "méthode non supportée", http.StatusMethodNotAllowed)
+			return
+		}
+		if admin.Enabled() {
+			w.WriteHeader(http.StatusConflict)
+			writeJSON(w, map[string]any{"ok": false, "error": "un compte administrateur existe déjà"})
+			return
+		}
+		var body struct {
+			Password string `json:"password"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if len(body.Password) < 6 {
+			w.WriteHeader(http.StatusBadRequest)
+			writeJSON(w, map[string]any{"ok": false, "error": "mot de passe trop court (6 caractères minimum)"})
+			return
+		}
+		admin.SetPassword(body.Password)
+		log.Info("compte administrateur créé")
+		writeJSON(w, map[string]any{"ok": true, "token": admin.Token(12 * time.Hour)})
 	})
 
 	// Connexion : vérifie le mot de passe et délivre un jeton (endpoint ouvert).
@@ -148,17 +177,43 @@ func main() {
 			Password string `json:"password"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		if !authEnabled {
-			writeJSON(w, map[string]any{"auth_required": false})
+		if !admin.Enabled() {
+			w.WriteHeader(http.StatusConflict)
+			writeJSON(w, map[string]any{"ok": false, "error": "aucun compte : créez-le d'abord"})
 			return
 		}
-		if !auth.VerifyPassword(body.Password, adminHash) {
+		if !admin.Verify(body.Password) {
 			w.WriteHeader(http.StatusUnauthorized)
 			writeJSON(w, map[string]any{"ok": false, "error": "identifiants invalides"})
 			return
 		}
-		token := auth.IssueToken(authSecret, "admin", 12*time.Hour)
-		writeJSON(w, map[string]any{"ok": true, "token": token})
+		writeJSON(w, map[string]any{"ok": true, "token": admin.Token(12 * time.Hour)})
+	})
+
+	// Changement de mot de passe (protégé par le middleware) : exige l'ancien.
+	mux.HandleFunc("/_sentinel/password", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "méthode non supportée", http.StatusMethodNotAllowed)
+			return
+		}
+		var body struct {
+			Old string `json:"old"`
+			New string `json:"new"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if !admin.Verify(body.Old) {
+			w.WriteHeader(http.StatusUnauthorized)
+			writeJSON(w, map[string]any{"ok": false, "error": "mot de passe actuel incorrect"})
+			return
+		}
+		if len(body.New) < 6 {
+			w.WriteHeader(http.StatusBadRequest)
+			writeJSON(w, map[string]any{"ok": false, "error": "nouveau mot de passe trop court (6 caractères minimum)"})
+			return
+		}
+		admin.SetPassword(body.New)
+		log.Info("mot de passe administrateur modifié")
+		writeJSON(w, map[string]any{"ok": true})
 	})
 	mux.HandleFunc("/_sentinel/stats", func(w http.ResponseWriter, r *http.Request) {
 		if store != nil {
@@ -342,12 +397,19 @@ func main() {
 	// Middleware d'authentification : protège toute l'API de contrôle
 	// (/_sentinel/*) sauf /login et /health. Le trafic applicatif ("/") passe
 	// par le proxy WAF et n'est jamais concerné. Sans jeton valide -> 401.
-	openPaths := map[string]bool{"/_sentinel/login": true, "/_sentinel/health": true}
+	// Middleware d'authentification : protège toute l'API de contrôle
+	// (/_sentinel/*) sauf /health, /login et /setup. Le trafic applicatif ("/")
+	// passe par le proxy WAF et n'est jamais concerné. Sans jeton valide -> 401.
+	openPaths := map[string]bool{
+		"/_sentinel/health": true,
+		"/_sentinel/login":  true,
+		"/_sentinel/setup":  true,
+	}
 	guarded := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
-		if authEnabled && strings.HasPrefix(p, "/_sentinel/") && !openPaths[p] {
+		if strings.HasPrefix(p, "/_sentinel/") && !openPaths[p] {
 			tok := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-			if _, ok := auth.ParseToken(authSecret, tok); !ok {
+			if !admin.Valid(tok) {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusUnauthorized)
 				_ = json.NewEncoder(w).Encode(map[string]any{"error": "authentification requise"})

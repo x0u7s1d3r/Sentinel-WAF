@@ -410,3 +410,4 @@ a { color: inherit; text-decoration: none; }
 .login-btn { width: 100%; padding: 12px; font-size: 14px; }
 .login-err { color: var(--threat); font-size: 12px; margin-bottom: 12px; text-align: left; }
 .logout-btn { margin-left: 10px; }
+.login-note { font-size: 11px; color: var(--faint); margin-top: 14px; line-height: 1.4; }
