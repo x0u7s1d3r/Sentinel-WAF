@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -352,7 +353,13 @@ func buildDiscordPayload(sev severity, count int, window, verdict, apps, cats, i
 		fields = append(fields, map[string]any{"name": "Cibles", "value": paths, "inline": false})
 	}
 	if analysis != "" {
-		fields = append(fields, map[string]any{"name": "🧠 Analyse IA", "value": truncate(analysis, 1000), "inline": false})
+		an, measures := splitAnalysis(analysis)
+		if an != "" {
+			fields = append(fields, map[string]any{"name": "🧠 Analyse", "value": truncate(an, 1000), "inline": false})
+		}
+		if measures != "" {
+			fields = append(fields, map[string]any{"name": "✅ Mesures immédiates", "value": truncate(measures, 1000), "inline": false})
+		}
 	}
 	return map[string]any{
 		"embeds": []map[string]any{{
@@ -385,7 +392,13 @@ func buildSlackPayload(sev severity, count int, window, verdict, apps, cats, ips
 		fields = append(fields, map[string]any{"title": "Cibles", "value": paths, "short": false})
 	}
 	if analysis != "" {
-		fields = append(fields, map[string]any{"title": "🧠 Analyse IA", "value": truncate(analysis, 1500), "short": false})
+		an, measures := splitAnalysis(analysis)
+		if an != "" {
+			fields = append(fields, map[string]any{"title": "🧠 Analyse", "value": truncate(an, 1500), "short": false})
+		}
+		if measures != "" {
+			fields = append(fields, map[string]any{"title": "✅ Mesures immédiates", "value": truncate(measures, 1500), "short": false})
+		}
 	}
 	return map[string]any{
 		"text": fallback,
@@ -405,6 +418,59 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return s[:max-1] + "…"
+}
+
+// splitAnalysis sépare la réponse du LLM en (analyse, mesures) à partir des
+// marqueurs attendus, et transforme les mesures en liste à puces. Si les
+// marqueurs sont absents, tout est renvoyé comme analyse (repli gracieux).
+func splitAnalysis(text string) (analysis, measures string) {
+	t := strings.TrimSpace(text)
+	up := strings.ToUpper(t)
+
+	// Localise le libellé des mesures (plusieurs variantes tolérées).
+	markerPos, markerLen := -1, 0
+	for _, m := range []string{"MESURES IMMÉDIATES", "MESURES IMMEDIATES", "MESURES"} {
+		if i := strings.Index(up, m); i >= 0 {
+			markerPos, markerLen = i, len(m)
+			break
+		}
+	}
+
+	if markerPos < 0 {
+		// Pas de section mesures : on nettoie un éventuel préfixe "ANALYSE :".
+		return cleanLabel(t, "ANALYSE"), ""
+	}
+
+	analysis = cleanLabel(strings.TrimSpace(t[:markerPos]), "ANALYSE")
+
+	// Contenu après le libellé (et son éventuel ':').
+	rest := strings.TrimSpace(t[markerPos+markerLen:])
+	rest = strings.TrimLeft(rest, " :\t\n")
+
+	// Découpe par ';' (ou retour à la ligne), et met en puces.
+	var seps []string
+	if strings.Contains(rest, ";") {
+		seps = strings.Split(rest, ";")
+	} else {
+		seps = strings.Split(rest, "\n")
+	}
+	var b strings.Builder
+	for _, p := range seps {
+		p = strings.TrimSpace(strings.Trim(p, "-•* \t"))
+		if p != "" {
+			b.WriteString("• " + p + "\n")
+		}
+	}
+	return analysis, strings.TrimSpace(b.String())
+}
+
+// cleanLabel retire un préfixe de libellé ("ANALYSE :") en tête de texte.
+func cleanLabel(s, label string) string {
+	s = strings.TrimSpace(s)
+	if strings.HasPrefix(strings.ToUpper(s), label) {
+		return strings.TrimSpace(strings.TrimLeft(s[len(label):], " :\t\n"))
+	}
+	return s
 }
 
 // Close vide la file restante et arrête le worker.
