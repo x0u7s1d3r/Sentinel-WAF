@@ -127,6 +127,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Alerte Slack (agrégée, non bloquante) dès qu'une attaque est traitée.
 	if verdict != "allowed" {
 		g.notifier.Notify(notifier.Alert{
+			App:        appName,
 			ClientIP:   ip,
 			Path:       req.Path,
 			Verdict:    verdict,

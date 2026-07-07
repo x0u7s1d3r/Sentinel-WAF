@@ -79,16 +79,21 @@ type Summary struct {
 	Blocked    int
 	Detected   int
 	Window     string
+	Apps       string
 	Categories string
 	TopIPs     string
 	TopPaths   string
 }
 
 const systemPrompt = `Tu es un analyste en cybersécurité (SOC) qui s'exprime en français.
-On te fournit le résumé d'un épisode d'attaques détectées par un pare-feu applicatif web (WAF).
-Rédige une analyse concise et professionnelle de 3 à 5 phrases, en prose (sans listes ni titres), comprenant :
-la nature des attaques et l'intention probable de l'attaquant ; le niveau de risque ; une recommandation d'action concrète.
-Reste factuel et précis. N'invente aucun détail absent du résumé.`
+On te fournit le résumé d'un épisode d'attaques détectées par un pare-feu applicatif web (WAF), avec l'application (le site) visée.
+Réponds en deux parties nettes, en français, sans Markdown lourd :
+
+ANALYSE : 2 à 3 phrases décrivant la nature des attaques, l'application ciblée, l'intention probable de l'attaquant et le niveau de risque.
+
+MESURES IMMÉDIATES : 2 à 4 actions concrètes, courtes et directement applicables, séparées par des points-virgules (ex. « Bannir l'IP X depuis le dashboard ; auditer les journaux d'accès de l'application Y ; vérifier que les correctifs sont appliqués »). Les mesures doivent être précises et opérationnelles, pas génériques.
+
+Reste factuel. N'invente aucun détail absent du résumé.`
 
 // Analyze renvoie l'analyse en langage naturel de l'épisode, ou une erreur.
 func (c *Client) Analyze(ctx context.Context, s Summary) (string, error) {
@@ -102,8 +107,8 @@ func (c *Client) Analyze(ctx context.Context, s Summary) (string, error) {
 		return "", fmt.Errorf("enrichissement désactivé")
 	}
 	user := fmt.Sprintf(
-		"Épisode d'attaques (fenêtre : %s)\n- Total : %d (bloquées : %d, surveillance : %d)\n- Catégories : %s\n- Sources (IP) : %s\n- Cibles (URL) : %s",
-		s.Window, s.Count, s.Blocked, s.Detected, orNone(s.Categories), orNone(s.TopIPs), orNone(s.TopPaths))
+		"Épisode d'attaques (fenêtre : %s)\n- Application(s) visée(s) : %s\n- Total : %d (bloquées : %d, surveillance : %d)\n- Catégories : %s\n- Sources (IP) : %s\n- Cibles (URL) : %s",
+		s.Window, orNone(s.Apps), s.Count, s.Blocked, s.Detected, orNone(s.Categories), orNone(s.TopIPs), orNone(s.TopPaths))
 
 	payload := map[string]any{
 		"model": model,
@@ -151,7 +156,7 @@ func (c *Client) Analyze(ctx context.Context, s Summary) (string, error) {
 // Test vérifie la configuration en demandant une courte analyse d'exemple.
 func (c *Client) Test(ctx context.Context) error {
 	_, err := c.Analyze(ctx, Summary{
-		Count: 1, Blocked: 1, Window: "test",
+		Count: 1, Blocked: 1, Window: "test", Apps: "site-demo",
 		Categories: "sqli (1)", TopIPs: "203.0.113.10 (1)", TopPaths: "/login (1)",
 	})
 	return err

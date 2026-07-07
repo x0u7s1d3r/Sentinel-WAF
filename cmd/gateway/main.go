@@ -107,7 +107,7 @@ func main() {
 	} else {
 		log.Info("enrichissement IA désactivé (configurable depuis le dashboard)")
 	}
-	analyze := func(count, blocked, detected int, window, cats, ips, paths string) (string, error) {
+	analyze := func(count, blocked, detected int, window, apps, cats, ips, paths string) (string, error) {
 		if !enr.Enabled() {
 			return "", nil // silencieux si désactivé
 		}
@@ -115,7 +115,7 @@ func main() {
 		defer cancel()
 		return enr.Analyze(ctx, enricher.Summary{
 			Count: count, Blocked: blocked, Detected: detected,
-			Window: window, Categories: cats, TopIPs: ips, TopPaths: paths,
+			Window: window, Apps: apps, Categories: cats, TopIPs: ips, TopPaths: paths,
 		})
 	}
 	save := func(text string) {

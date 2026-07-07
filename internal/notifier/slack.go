@@ -30,6 +30,7 @@ const (
 
 // Alert décrit une attaque à signaler.
 type Alert struct {
+	App        string
 	ClientIP   string
 	Path       string
 	Verdict    string // blocked | detected
@@ -41,7 +42,7 @@ type Alert struct {
 // tourne toujours, et n'envoie que vers les destinations effectivement définies.
 // AnalyzeFunc produit une analyse en langage naturel d'un épisode d'attaques.
 // Fournie par le module d'enrichissement (peut être nil = pas d'IA).
-type AnalyzeFunc func(count, blocked, detected int, window, cats, ips, paths string) (string, error)
+type AnalyzeFunc func(count, blocked, detected int, window, apps, cats, ips, paths string) (string, error)
 
 // SaveAnalysisFunc persiste la dernière analyse (pour l'afficher au dashboard).
 type SaveAnalysisFunc func(text string)
@@ -237,6 +238,7 @@ func (n *Notifier) flush(alerts []Alert) {
 	byCat := map[string]int{}
 	byIP := map[string]int{}
 	byPath := map[string]int{}
+	byApp := map[string]int{}
 	for _, a := range alerts {
 		if a.Verdict == "blocked" {
 			blocked++
@@ -250,10 +252,14 @@ func (n *Notifier) flush(alerts []Alert) {
 		if a.Path != "" {
 			byPath[a.Path]++
 		}
+		if a.App != "" {
+			byApp[a.App]++
+		}
 	}
 
 	sev := severityFor(byCat, blocked)
 	window := n.interval.String()
+	apps := topCounts(byApp, 5)
 	cats := topCounts(byCat, 6)
 	ips := topCounts(byIP, 5)
 	paths := topCounts(byPath, 5)
@@ -267,7 +273,7 @@ func (n *Notifier) flush(alerts []Alert) {
 	analyze, saveAnalysis := n.analyze, n.saveAnalysis
 	n.mu.RUnlock()
 	if analyze != nil {
-		if txt, err := analyze(len(alerts), blocked, detected, window, cats, ips, paths); err != nil {
+		if txt, err := analyze(len(alerts), blocked, detected, window, apps, cats, ips, paths); err != nil {
 			n.log.Warn("analyse IA indisponible", "err", err)
 		} else if txt != "" {
 			analysis = txt
@@ -282,13 +288,13 @@ func (n *Notifier) flush(alerts []Alert) {
 		len(alerts), window, sev.label, verdict)
 
 	if slackURL != "" {
-		payload := buildSlackPayload(sev, len(alerts), window, verdict, cats, ips, paths, analysis, fallback)
+		payload := buildSlackPayload(sev, len(alerts), window, verdict, apps, cats, ips, paths, analysis, fallback)
 		if err := n.postJSON(slackURL, payload); err != nil {
 			n.log.Warn("envoi alerte Slack échoué", "err", err)
 		}
 	}
 	if discordURL != "" {
-		payload := buildDiscordPayload(sev, len(alerts), window, verdict, cats, ips, paths, analysis, when)
+		payload := buildDiscordPayload(sev, len(alerts), window, verdict, apps, cats, ips, paths, analysis, when)
 		if err := n.postJSON(discordURL, payload); err != nil {
 			n.log.Warn("envoi alerte Discord échoué", "err", err)
 		}
@@ -327,12 +333,15 @@ func severityFor(byCat map[string]int, blocked int) severity {
 }
 
 // buildDiscordPayload construit un embed Discord coloré.
-func buildDiscordPayload(sev severity, count int, window, verdict, cats, ips, paths, analysis, when string) map[string]any {
+func buildDiscordPayload(sev severity, count int, window, verdict, apps, cats, ips, paths, analysis, when string) map[string]any {
 	fields := []map[string]any{
 		{"name": "Gravité", "value": sev.emoji + " " + sev.label, "inline": true},
 		{"name": "Fenêtre", "value": window, "inline": true},
-		{"name": "Verdict", "value": verdict, "inline": false},
 	}
+	if apps != "" {
+		fields = append(fields, map[string]any{"name": "🎯 Application(s) visée(s)", "value": apps, "inline": false})
+	}
+	fields = append(fields, map[string]any{"name": "Verdict", "value": verdict, "inline": false})
 	if cats != "" {
 		fields = append(fields, map[string]any{"name": "Catégories", "value": cats, "inline": true})
 	}
@@ -357,12 +366,15 @@ func buildDiscordPayload(sev severity, count int, window, verdict, cats, ips, pa
 }
 
 // buildSlackPayload construit un attachment Slack coloré.
-func buildSlackPayload(sev severity, count int, window, verdict, cats, ips, paths, analysis, fallback string) map[string]any {
+func buildSlackPayload(sev severity, count int, window, verdict, apps, cats, ips, paths, analysis, fallback string) map[string]any {
 	fields := []map[string]any{
 		{"title": "Gravité", "value": sev.emoji + " " + sev.label, "short": true},
 		{"title": "Fenêtre", "value": window, "short": true},
-		{"title": "Verdict", "value": verdict, "short": false},
 	}
+	if apps != "" {
+		fields = append(fields, map[string]any{"title": "🎯 Application(s) visée(s)", "value": apps, "short": false})
+	}
+	fields = append(fields, map[string]any{"title": "Verdict", "value": verdict, "short": false})
 	if cats != "" {
 		fields = append(fields, map[string]any{"title": "Catégories", "value": cats, "short": true})
 	}
