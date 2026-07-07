@@ -74,16 +74,21 @@ func main() {
 
 	// Notificateur Slack : le webhook persisté (défini via le dashboard) a la
 	// priorité ; sinon on retombe sur la variable d'environnement.
-	initialWebhook := settings.SlackWebhook()
-	if initialWebhook == "" {
-		initialWebhook = cfg.SlackWebhook
+	slackInit := settings.SlackWebhook()
+	if slackInit == "" {
+		slackInit = cfg.SlackWebhook
 	}
-	notif := notifier.NewSlack(initialWebhook, alertInterval, log)
+	discordInit := settings.DiscordWebhook()
+	if discordInit == "" {
+		discordInit = cfg.DiscordWebhook
+	}
+	notif := notifier.New(slackInit, discordInit, alertInterval, log)
 	defer notif.Close()
-	if notif.Configured() {
-		log.Info("alertes Slack activées", "intervalle", alertInterval)
+	if notif.Configured(notifier.KindSlack) || notif.Configured(notifier.KindDiscord) {
+		log.Info("alertes activées", "slack", notif.Configured(notifier.KindSlack),
+			"discord", notif.Configured(notifier.KindDiscord), "intervalle", alertInterval)
 	} else {
-		log.Info("alertes Slack en attente d'un webhook (configurable depuis le dashboard)")
+		log.Info("alertes en attente d'un webhook (configurable depuis le dashboard)")
 	}
 
 	// Routeur multi-application : chargé depuis la base, rechargé à chaud.
@@ -247,7 +252,7 @@ func main() {
 			writeJSON(w, map[string]any{"persistence": false})
 			return
 		}
-		a, err := store.Analytics(r.URL.Query().Get("app"))
+		a, err := store.Analytics(r.URL.Query().Get("app"), r.URL.Query().Get("range"))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -266,6 +271,7 @@ func main() {
 				Threshold         *int      `json:"threshold"`
 				EnabledCategories *[]string `json:"enabled_categories"`
 				SlackWebhook      *string   `json:"slack_webhook"`
+				DiscordWebhook    *string   `json:"discord_webhook"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				http.Error(w, "corps JSON invalide", http.StatusBadRequest)
@@ -282,7 +288,11 @@ func main() {
 			}
 			if body.SlackWebhook != nil {
 				settings.SetSlackWebhook(*body.SlackWebhook)
-				notif.SetWebhook(*body.SlackWebhook) // applique à chaud
+				notif.SetWebhook(notifier.KindSlack, *body.SlackWebhook) // à chaud
+			}
+			if body.DiscordWebhook != nil {
+				settings.SetDiscordWebhook(*body.DiscordWebhook)
+				notif.SetWebhook(notifier.KindDiscord, *body.DiscordWebhook) // à chaud
 			}
 			writeJSON(w, settings.Snapshot())
 		default:
@@ -290,18 +300,22 @@ func main() {
 		}
 	})
 
-	// --- Test d'alerte Slack (envoi immédiat d'un message de vérification) ---
-	mux.HandleFunc("/_sentinel/slack/test", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "méthode non supportée", http.StatusMethodNotAllowed)
-			return
+	// --- Test d'alerte (envoi immédiat) : /_sentinel/{slack,discord}/test ---
+	testHandler := func(kind string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost {
+				http.Error(w, "méthode non supportée", http.StatusMethodNotAllowed)
+				return
+			}
+			if err := notif.Test(kind); err != nil {
+				writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+				return
+			}
+			writeJSON(w, map[string]any{"ok": true})
 		}
-		if err := notif.Test(); err != nil {
-			writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
-			return
-		}
-		writeJSON(w, map[string]any{"ok": true})
-	})
+	}
+	mux.HandleFunc("/_sentinel/slack/test", testHandler(notifier.KindSlack))
+	mux.HandleFunc("/_sentinel/discord/test", testHandler(notifier.KindDiscord))
 
 	// --- Blocklist d'IP pilotable ---
 	mux.HandleFunc("/_sentinel/blocklist", func(w http.ResponseWriter, r *http.Request) {

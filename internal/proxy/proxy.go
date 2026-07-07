@@ -39,12 +39,12 @@ type Gateway struct {
 	settings *Settings              // configuration modifiable à chaud
 	log      *slog.Logger
 	store    *storage.Store
-	notifier *notifier.Slack
+	notifier *notifier.Notifier
 	Stats    Stats
 }
 
 // New construit la passerelle. store et notif peuvent être nil.
-func New(cfg config.Config, chain *detector.Chain, log *slog.Logger, store *storage.Store, router *Router, notif *notifier.Slack, settings *Settings) (*Gateway, error) {
+func New(cfg config.Config, chain *detector.Chain, log *slog.Logger, store *storage.Store, router *Router, notif *notifier.Notifier, settings *Settings) (*Gateway, error) {
 	target, err := url.Parse(cfg.Upstream)
 	if err != nil {
 		return nil, err

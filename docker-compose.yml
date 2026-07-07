@@ -20,7 +20,7 @@ services:
       - SENTINEL_ALERT_INTERVAL_SEC=${SENTINEL_ALERT_INTERVAL_SEC:-15}
       - SENTINEL_ADMIN_PASSWORD=${SENTINEL_ADMIN_PASSWORD}
     depends_on:
-      - demo-target
+      - dvwa
       - postgres
     restart: unless-stopped
 
@@ -36,7 +36,7 @@ services:
     build:
       context: ./dashboard
     ports:
-      - "8081:80"
+      - "3000:80"
     depends_on:
       - gateway
     restart: unless-stopped

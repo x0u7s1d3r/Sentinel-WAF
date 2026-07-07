@@ -38,11 +38,12 @@ export const api = {
   health: () => get('/health'),
   stats: () => get('/stats'),
   events: () => get('/events'),
-  analytics: () => get('/analytics'),
+  analytics: (range) => get('/analytics' + (range ? `?range=${encodeURIComponent(range)}` : '')),
   apps: () => get('/apps'),
   settings: () => get('/settings'),
   setSettings: (body) => post('/settings', body),
   slackTest: () => post('/slack/test', {}),
+  discordTest: () => post('/discord/test', {}),
   blocklist: (ip, action) => post('/blocklist', { ip, action }),
   addApp: (app) => post('/apps', app),
   updateApp: (id, mode, threshold) =>

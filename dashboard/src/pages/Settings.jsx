@@ -8,6 +8,9 @@ export default function Settings() {
   const [webhook, setWebhook] = useState('')
   const [slackMsg, setSlackMsg] = useState(null)
   const [slackBusy, setSlackBusy] = useState(false)
+  const [discordHook, setDiscordHook] = useState('')
+  const [discordMsg, setDiscordMsg] = useState(null)
+  const [discordBusy, setDiscordBusy] = useState(false)
   const [pwOld, setPwOld] = useState('')
   const [pwNew, setPwNew] = useState('')
   const [pwConfirm, setPwConfirm] = useState('')
@@ -56,6 +59,29 @@ export default function Settings() {
     } catch (e) {
       setSlackMsg({ ok: false, text: String(e.message || e).slice(0, 140) })
     } finally { setSlackBusy(false) }
+  }
+
+  async function saveDiscord() {
+    setDiscordBusy(true); setDiscordMsg(null)
+    try {
+      await api.setSettings({ discord_webhook: discordHook.trim() })
+      setDiscordHook('')
+      setDiscordMsg({ ok: true, text: discordHook.trim() ? 'Webhook enregistré.' : 'Webhook retiré.' })
+      refresh()
+    } catch (e) {
+      setDiscordMsg({ ok: false, text: String(e.message || e).slice(0, 140) })
+    } finally { setDiscordBusy(false) }
+  }
+  async function testDiscord() {
+    setDiscordBusy(true); setDiscordMsg(null)
+    try {
+      const r = await api.discordTest()
+      setDiscordMsg(r.ok
+        ? { ok: true, text: 'Message de test envoyé ✅ Vérifiez votre salon Discord.' }
+        : { ok: false, text: r.error || 'Échec de l’envoi.' })
+    } catch (e) {
+      setDiscordMsg({ ok: false, text: String(e.message || e).slice(0, 140) })
+    } finally { setDiscordBusy(false) }
   }
 
   async function changePassword() {
@@ -167,6 +193,35 @@ export default function Settings() {
           {slackMsg && (
             <div style={{ fontSize: 12, marginTop: 10, color: slackMsg.ok ? 'var(--safe)' : 'var(--threat)' }}>
               {slackMsg.text}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Alertes Discord */}
+      <div className="card" style={{ marginTop: 18 }}>
+        <div className="card-h">
+          <h3>Alertes Discord</h3>
+          <span className={`hint ${s.discord_webhook_set ? 'ok-hint' : ''}`}>
+            {s.discord_webhook_set ? '● Configuré' : '○ Non configuré'}
+          </span>
+        </div>
+        <div className="card-b">
+          <div className="field-h" style={{ marginTop: 0, marginBottom: 12 }}>
+            Recevez le même résumé d'attaques dans un salon Discord. Dans votre
+            salon : Paramètres → Intégrations → Webhooks → « Nouveau webhook »,
+            puis copiez l'URL ici. Slack et Discord peuvent être actifs ensemble.
+            {s.discord_webhook_set && ' Un webhook est déjà enregistré ; saisissez-en un nouveau pour le remplacer, ou laissez vide et enregistrez pour le retirer.'}
+          </div>
+          <div className="bl-input">
+            <input type="password" value={discordHook} onChange={(e) => setDiscordHook(e.target.value)}
+              placeholder={s.discord_webhook_set ? '•••••••• (webhook enregistré)' : 'https://discord.com/api/webhooks/…'} />
+            <button className="btn accent" onClick={saveDiscord} disabled={discordBusy}>Enregistrer</button>
+            <button className="btn" onClick={testDiscord} disabled={discordBusy || !s.discord_webhook_set}>Tester</button>
+          </div>
+          {discordMsg && (
+            <div style={{ fontSize: 12, marginTop: 10, color: discordMsg.ok ? 'var(--safe)' : 'var(--threat)' }}>
+              {discordMsg.text}
             </div>
           )}
         </div>

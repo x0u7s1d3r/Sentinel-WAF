@@ -1,9 +1,21 @@
+import { useState, useEffect } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell,
 } from 'recharts'
 import { api, CATEGORIES } from '../api.js'
+
+// Plages de temps proposées et leur pas d'agrégation (ms) côté affichage.
+const RANGES = [
+  ['1h', "1 h", 60000],
+  ['24h', '24 h', 900000],
+  ['72h', '72 h', 3600000],
+  ['7d', '7 j', 10800000],
+  ['30d', '30 j', 86400000],
+  ['all', 'Tout', 86400000],
+]
+const RANGE_LABEL = Object.fromEntries(RANGES.map(([k, l]) => [k, l]))
 
 const CAT_COLOR = {
   sqli: '#E23D43', xss: '#D9820A', path_traversal: '#9B8CFF',
@@ -18,27 +30,53 @@ const CAT_LABEL = {
 const VERDICT = { blocked: 'BLOQUÉE', detected: 'SURVEIL.', allowed: 'PASSÉE' }
 
 const hhmm = (t) => (t || '').slice(11, 16)
+const ddmm = (t) => { const d = new Date(t); return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}` }
 const fmtTime = (ts) => new Date(ts).toLocaleTimeString('fr-FR', { hour12: false })
 
-// Comble les minutes sans trafic pour une courbe continue (dernière heure).
-function fillSeries(series) {
+// Étiquette d'axe selon la plage : heure pour les courtes, date pour les longues.
+function tickFmt(range) {
+  return (range === '7d' || range === '30d' || range === 'all') ? ddmm : hhmm
+}
+// Étiquette du tooltip : date + heure sur les longues plages.
+function labelFmt(range) {
+  if (range === '7d' || range === '30d' || range === 'all') {
+    return (t) => { const d = new Date(t); return `${ddmm(t)} ${String(d.getHours()).padStart(2, '0')}:00` }
+  }
+  return hhmm
+}
+
+// Comble les tranches vides pour une courbe continue, selon le pas de la plage.
+function fillSeries(series, stepMs) {
   if (!series || series.length === 0) return []
   const byT = new Map(series.map((p) => [p.t, p]))
-  const bucket = (ms) => new Date(ms).toISOString().slice(0, 16) + ':00Z'
+  const bucket = (ms) => new Date(Math.floor(ms / stepMs) * stepMs).toISOString().slice(0, 19) + 'Z'
   const first = new Date(series[0].t).getTime()
   const last = new Date(series[series.length - 1].t).getTime()
   const out = []
-  for (let m = first; m <= last; m += 60000) {
+  for (let m = first; m <= last; m += stepMs) {
     const key = bucket(m)
     out.push(byT.get(key) || { t: key, total: 0, blocked: 0, detected: 0, allowed: 0 })
   }
-  return out.slice(-60)
+  return out.slice(-400) // borne de sécurité
 }
 
 export default function SocConsole() {
   const { stats, events, analytics, settings, refresh } = useOutletContext()
-  const a = analytics || {}
-  const series = fillSeries(a.timeseries)
+  const [range, setRange] = useState('1h')
+  const [local, setLocal] = useState(null)
+
+  // Charge l'analytique pour la plage choisie (et rafraîchit en direct).
+  useEffect(() => {
+    let alive = true
+    const load = () => api.analytics(range).then((d) => { if (alive) setLocal(d) }).catch(() => {})
+    load()
+    const id = setInterval(load, 2500)
+    return () => { alive = false; clearInterval(id) }
+  }, [range])
+
+  const a = local || analytics || {}
+  const stepMs = (RANGES.find((r) => r[0] === range) || RANGES[0])[2]
+  const series = fillSeries(a.timeseries, stepMs)
   const cats = a.by_category || []
   const topIps = a.top_ips || []
   const topPaths = a.top_paths || []
@@ -113,9 +151,18 @@ export default function SocConsole() {
       </div>
 
       <div className="soc-hero">
-        <h3 style={{ margin: '0 0 10px', fontFamily: 'var(--display)', fontSize: 13 }}>
-          Trafic — dernière heure
-        </h3>
+        <div className="range-head">
+          <h3 style={{ margin: 0, fontFamily: 'var(--display)', fontSize: 13 }}>
+            Trafic — {RANGE_LABEL[range] === 'Tout' ? 'tout l’historique' : `derniers ${RANGE_LABEL[range]}`}
+          </h3>
+          <div className="range-picker">
+            {RANGES.map(([key, label]) => (
+              <button key={key}
+                className={`range-btn ${range === key ? 'active' : ''}`}
+                onClick={() => setRange(key)}>{label}</button>
+            ))}
+          </div>
+        </div>
         <div style={{ height: 220 }}>
           {series.length === 0 ? (
             <Empty msg="En attente de trafic pour tracer la courbe." />
@@ -136,12 +183,12 @@ export default function SocConsole() {
                     <stop offset="100%" stopColor="#D9820A" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <XAxis dataKey="t" tickFormatter={hhmm} tick={{ fill: '#7A8AA0', fontSize: 11 }}
+                <XAxis dataKey="t" tickFormatter={tickFmt(range)} tick={{ fill: '#7A8AA0', fontSize: 11 }}
                   axisLine={{ stroke: '#E4EBF4' }} tickLine={false} minTickGap={40} />
                 <YAxis allowDecimals={false} tick={{ fill: '#7A8AA0', fontSize: 11 }}
                   axisLine={false} tickLine={false} width={38} />
                 <Tooltip
-                  labelFormatter={hhmm}
+                  labelFormatter={labelFmt(range)}
                   contentStyle={{ background: '#FFFFFF', border: '1px solid #CFDCEC', borderRadius: 8, fontSize: 12 }}
                   labelStyle={{ color: '#5C6B80' }} />
                 <Area type="monotone" dataKey="allowed" stackId="1" stroke="#17A34A" fill="url(#gAllowed)" strokeWidth={1.5} name="Autorisées" />

@@ -13,6 +13,7 @@ package storage
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -331,26 +332,55 @@ func (s *Store) LoadSetting(key string, dest any) (bool, error) {
 // Analytics renvoie toutes les agrégations nécessaires au tableau de bord SOC,
 // en un seul appel : séries temporelles (trafic par minute), répartition par
 // catégorie, top IP attaquantes, top URLs ciblées, et bilan des verdicts.
-func (s *Store) Analytics(app string) (map[string]any, error) {
+// rangeParams traduit une plage ("1h","24h","72h","7d","30d","all") en fenêtre
+// de temps et pas d'agrégation (en secondes), pour garder un nombre de points
+// lisible quelle que soit la durée.
+func rangeParams(rng string) (windowSec, bucketSec int64) {
+	switch rng {
+	case "24h":
+		return 86400, 900 // 24 h, pas de 15 min  -> 96 points
+	case "72h":
+		return 259200, 3600 // 72 h, pas de 1 h    -> 72 points
+	case "7d":
+		return 604800, 10800 // 7 j, pas de 3 h    -> 56 points
+	case "30d":
+		return 2592000, 86400 // 30 j, pas de 1 j  -> 30 points
+	case "all":
+		return 0, 86400 // tout l'historique, pas de 1 j
+	default: // "1h"
+		return 3600, 60 // 1 h, pas de 1 min       -> 60 points
+	}
+}
+
+func (s *Store) Analytics(app, rng string) (map[string]any, error) {
 	out := map[string]any{}
-	// Clause de filtrage par site : appApp() renvoie soit "", soit " AND app=$1".
+	// Filtrage par site : "" ou " AND app=$1".
 	af := ""
 	args := []any{}
 	if app != "" {
 		af = " AND app = $1"
 		args = append(args, app)
 	}
+	windowSec, bucketSec := rangeParams(rng)
+	// Clause de fenêtre temporelle (vide pour "all").
+	tf := ""
+	if windowSec > 0 {
+		tf = fmt.Sprintf(" AND ts > now() - interval '%d seconds'", windowSec)
+	}
+	out["range"] = rng
 
-	// 1) Série temporelle : trafic par minute sur la dernière heure.
-	if rows, err := s.db.Query(`
-		SELECT to_char(date_trunc('minute', ts) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:00"Z"'),
+	// 1) Série temporelle : trafic agrégé par tranche (bucket) adaptée à la plage.
+	//    On regroupe par tranche epoch pour un pas de temps arbitraire.
+	tsQuery := fmt.Sprintf(`
+		SELECT to_char(to_timestamp(floor(extract(epoch from ts)/%d)*%d) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:00"Z"'),
 		       COUNT(*),
 		       COUNT(*) FILTER (WHERE verdict='blocked'),
 		       COUNT(*) FILTER (WHERE verdict='detected'),
 		       COUNT(*) FILTER (WHERE verdict='allowed')
 		FROM events
-		WHERE ts > now() - interval '60 minutes'`+af+`
-		GROUP BY 1 ORDER BY 1`, args...); err == nil {
+		WHERE 1=1%s%s
+		GROUP BY 1 ORDER BY 1`, bucketSec, bucketSec, af, tf)
+	if rows, err := s.db.Query(tsQuery, args...); err == nil {
 		var series []map[string]any
 		for rows.Next() {
 			var b string
@@ -366,11 +396,11 @@ func (s *Store) Analytics(app string) (map[string]any, error) {
 		out["timeseries"] = series
 	}
 
-	// 2) Répartition par catégorie (la colonne stocke une liste séparée par ',').
+	// 2) Répartition par catégorie (sur la période).
 	if rows, err := s.db.Query(`
 		SELECT cat, COUNT(*) c FROM (
 		  SELECT unnest(string_to_array(categories, ',')) AS cat
-		  FROM events WHERE categories <> ''`+af+`
+		  FROM events WHERE categories <> ''`+af+tf+`
 		) s WHERE cat <> '' GROUP BY cat ORDER BY c DESC`, args...); err == nil {
 		var cats []map[string]any
 		for rows.Next() {
@@ -384,11 +414,11 @@ func (s *Store) Analytics(app string) (map[string]any, error) {
 		out["by_category"] = cats
 	}
 
-	// 3) Top IP par volume d'attaques.
+	// 3) Top IP par volume d'attaques (sur la période).
 	if rows, err := s.db.Query(`
 		SELECT client_ip, COUNT(*),
 		       COUNT(*) FILTER (WHERE verdict IN ('blocked','detected'))
-		FROM events WHERE 1=1`+af+`
+		FROM events WHERE 1=1`+af+tf+`
 		GROUP BY client_ip ORDER BY 3 DESC, 2 DESC LIMIT 8`, args...); err == nil {
 		var ips []map[string]any
 		for rows.Next() {
@@ -402,10 +432,10 @@ func (s *Store) Analytics(app string) (map[string]any, error) {
 		out["top_ips"] = ips
 	}
 
-	// 4) Top URLs ciblées par des attaques.
+	// 4) Top URLs ciblées par des attaques (sur la période).
 	if rows, err := s.db.Query(`
 		SELECT path, COUNT(*) c FROM events
-		WHERE verdict <> 'allowed'`+af+`
+		WHERE verdict <> 'allowed'`+af+tf+`
 		GROUP BY path ORDER BY c DESC LIMIT 8`, args...); err == nil {
 		var paths []map[string]any
 		for rows.Next() {

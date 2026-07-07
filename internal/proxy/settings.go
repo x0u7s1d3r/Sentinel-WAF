@@ -12,13 +12,14 @@ import (
 // globaux, catégories de détection activées, et blocklist d'IP. L'état est
 // protégé pour l'accès concurrent et persisté en base (survit au redémarrage).
 type Settings struct {
-	mu           sync.RWMutex
-	mode         string
-	threshold    int
-	enabled      map[string]bool
-	blocklist    map[string]bool
-	slackWebhook string
-	store        *storage.Store
+	mu             sync.RWMutex
+	mode           string
+	threshold      int
+	enabled        map[string]bool
+	blocklist      map[string]bool
+	slackWebhook   string
+	discordWebhook string
+	store          *storage.Store
 }
 
 // NewSettings initialise depuis la config, puis écrase avec l'état persisté
@@ -69,6 +70,10 @@ func (s *Settings) load() {
 	var wh string
 	if ok, _ := s.store.LoadSetting("slack_webhook", &wh); ok {
 		s.slackWebhook = wh
+	}
+	var dwh string
+	if ok, _ := s.store.LoadSetting("discord_webhook", &dwh); ok {
+		s.discordWebhook = dwh
 	}
 }
 
@@ -163,6 +168,21 @@ func (s *Settings) SetSlackWebhook(url string) {
 	_ = s.store.SaveSetting("slack_webhook", url)
 }
 
+// DiscordWebhook renvoie le webhook Discord persisté.
+func (s *Settings) DiscordWebhook() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.discordWebhook
+}
+
+// SetDiscordWebhook enregistre le webhook Discord (persisté).
+func (s *Settings) SetDiscordWebhook(url string) {
+	s.mu.Lock()
+	s.discordWebhook = url
+	s.mu.Unlock()
+	_ = s.store.SaveSetting("discord_webhook", url)
+}
+
 func (s *Settings) setBlock(ip string, on bool) {
 	if ip == "" {
 		return
@@ -197,11 +217,12 @@ func (s *Settings) Snapshot() map[string]any {
 	}
 	sort.Strings(bl)
 	return map[string]any{
-		"mode":               s.mode,
-		"threshold":          s.threshold,
-		"enabled_categories": en,
-		"all_categories":     detector.Categories,
-		"blocklist":          bl,
-		"slack_webhook_set":  s.slackWebhook != "",
+		"mode":                s.mode,
+		"threshold":           s.threshold,
+		"enabled_categories":  en,
+		"all_categories":      detector.Categories,
+		"blocklist":           bl,
+		"slack_webhook_set":   s.slackWebhook != "",
+		"discord_webhook_set": s.discordWebhook != "",
 	}
 }

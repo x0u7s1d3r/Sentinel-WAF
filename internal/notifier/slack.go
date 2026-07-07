@@ -1,12 +1,14 @@
-// Package notifier envoie des alertes vers Slack quand le WAF traite des
-// attaques. Deux principes :
+// Package notifier envoie des alertes agrégées vers des webhooks de messagerie
+// (Slack et/ou Discord) quand le WAF traite des attaques. Trois principes :
 //
-//   1. Anti-spam : les alertes sont AGRÉGÉES sur une fenêtre de temps. Un
-//      scanner qui envoie 500 requêtes ne produit pas 500 messages, mais un
-//      seul résumé « 500 attaques bloquées, dont … ».
-//   2. Non bloquant et sûr : l'envoi se fait en arrière-plan ; si Slack est
-//      indisponible, le trafic n'est jamais ralenti. Le webhook est un secret
-//      fourni par l'environnement — il n'apparaît jamais dans le code.
+//  1. Anti-spam : les alertes sont AGRÉGÉES sur une fenêtre de temps. Un
+//     scanner qui envoie 500 requêtes ne produit pas 500 messages, mais un
+//     seul résumé « 500 attaques bloquées, dont … ».
+//  2. Multi-destination : Slack et Discord peuvent être configurés ensemble ou
+//     séparément ; chaque lot est envoyé à toutes les destinations actives.
+//  3. Non bloquant et sûr : l'envoi se fait en arrière-plan ; si une messagerie
+//     est indisponible, le trafic n'est jamais ralenti. Les webhooks sont des
+//     secrets — ils n'apparaissent jamais dans le code.
 package notifier
 
 import (
@@ -20,6 +22,12 @@ import (
 	"time"
 )
 
+// Kinds de destinations supportées.
+const (
+	KindSlack   = "slack"
+	KindDiscord = "discord"
+)
+
 // Alert décrit une attaque à signaler.
 type Alert struct {
 	ClientIP   string
@@ -28,110 +36,143 @@ type Alert struct {
 	Categories []string
 }
 
-// Slack agrège et envoie les alertes à un webhook Slack (Incoming Webhook).
-// Le webhook est modifiable à chaud (depuis le dashboard) : le notificateur
-// existe toujours, et n'envoie que lorsqu'un webhook est configuré.
-type Slack struct {
-	mu       sync.RWMutex
-	webhook  string
-	interval time.Duration
-	ch       chan Alert
-	quit     chan struct{}
-	log      *slog.Logger
-	client   *http.Client
+// Notifier agrège les alertes et les diffuse vers les webhooks configurés.
+// Les webhooks sont modifiables à chaud (depuis le dashboard) : le notificateur
+// tourne toujours, et n'envoie que vers les destinations effectivement définies.
+type Notifier struct {
+	mu         sync.RWMutex
+	slackURL   string
+	discordURL string
+	interval   time.Duration
+	ch         chan Alert
+	quit       chan struct{}
+	log        *slog.Logger
+	client     *http.Client
 }
 
-// NewSlack crée le notificateur. Il tourne toujours (même sans webhook) ; sans
-// webhook configuré, les envois sont simplement ignorés.
-func NewSlack(webhook string, interval time.Duration, log *slog.Logger) *Slack {
+// New crée le notificateur. Il tourne toujours (même sans webhook) ; sans
+// destination configurée, les envois sont simplement ignorés.
+func New(slackURL, discordURL string, interval time.Duration, log *slog.Logger) *Notifier {
 	if interval <= 0 {
 		interval = 15 * time.Second
 	}
-	s := &Slack{
-		webhook:  webhook,
-		interval: interval,
-		ch:       make(chan Alert, 2048),
-		quit:     make(chan struct{}),
-		log:      log,
-		client:   &http.Client{Timeout: 5 * time.Second},
+	n := &Notifier{
+		slackURL:   slackURL,
+		discordURL: discordURL,
+		interval:   interval,
+		ch:         make(chan Alert, 2048),
+		quit:       make(chan struct{}),
+		log:        log,
+		client:     &http.Client{Timeout: 5 * time.Second},
 	}
-	go s.worker()
-	return s
+	go n.worker()
+	return n
 }
 
-// SetWebhook change le webhook à chaud (vide = désactive les alertes).
-func (s *Slack) SetWebhook(url string) {
-	if s == nil {
+// SetWebhook change à chaud le webhook d'une destination (vide = désactive).
+func (n *Notifier) SetWebhook(kind, url string) {
+	if n == nil {
 		return
 	}
-	s.mu.Lock()
-	s.webhook = url
-	s.mu.Unlock()
+	n.mu.Lock()
+	switch kind {
+	case KindDiscord:
+		n.discordURL = url
+	default:
+		n.slackURL = url
+	}
+	n.mu.Unlock()
 }
 
-// Configured indique si un webhook est actuellement défini.
-func (s *Slack) Configured() bool {
-	if s == nil {
+// Configured indique si une destination donnée a un webhook défini.
+func (n *Notifier) Configured(kind string) bool {
+	if n == nil {
 		return false
 	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.webhook != ""
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	if kind == KindDiscord {
+		return n.discordURL != ""
+	}
+	return n.slackURL != ""
 }
 
-func (s *Slack) currentWebhook() string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.webhook
+func (n *Notifier) urlFor(kind string) string {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	if kind == KindDiscord {
+		return n.discordURL
+	}
+	return n.slackURL
 }
 
-// Test envoie immédiatement un message de vérification (hors agrégation).
-// Renvoie une erreur si aucun webhook n'est configuré ou si l'envoi échoue.
-func (s *Slack) Test() error {
-	if s == nil {
+// Test envoie immédiatement un message de vérification à la destination donnée.
+func (n *Notifier) Test(kind string) error {
+	if n == nil {
 		return fmt.Errorf("notificateur indisponible")
 	}
-	url := s.currentWebhook()
+	url := n.urlFor(kind)
 	if url == "" {
-		return fmt.Errorf("aucun webhook Slack configuré")
+		return fmt.Errorf("aucun webhook %s configuré", kind)
 	}
-	return s.post(url, "🛡️ *Sentinel WAF* — message de test. Les alertes sont bien configurées ✅")
+	return n.post(kind, url, "🛡️ Sentinel WAF — message de test. Les alertes sont bien configurées ✅")
 }
 
-// post envoie un texte au webhook et renvoie une erreur en cas d'échec.
-func (s *Slack) post(url, text string) error {
-	payload, _ := json.Marshal(map[string]string{"text": text})
-	resp, err := s.client.Post(url, "application/json", bytes.NewReader(payload))
+// post envoie un texte au webhook, au format attendu par la plateforme.
+func (n *Notifier) post(kind, url, text string) error {
+	var payload []byte
+	if kind == KindDiscord {
+		payload, _ = json.Marshal(map[string]string{"content": text}) // Discord
+	} else {
+		payload, _ = json.Marshal(map[string]string{"text": text}) // Slack
+	}
+	resp, err := n.client.Post(url, "application/json", bytes.NewReader(payload))
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		return fmt.Errorf("Slack a répondu HTTP %d", resp.StatusCode)
+		return fmt.Errorf("%s a répondu HTTP %d", kind, resp.StatusCode)
 	}
 	return nil
 }
 
-// Notify met une alerte en file sans bloquer (abandonnée si la file est pleine).
-func (s *Slack) Notify(a Alert) {
-	if s == nil {
+// postJSON envoie un payload structuré déjà propre à la plateforme (embed
+// Discord, attachment Slack) au webhook.
+func (n *Notifier) postJSON(url string, payload any) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	resp, err := n.client.Post(url, "application/json", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("webhook a répondu HTTP %d", resp.StatusCode)
+	}
+	return nil
+}
+func (n *Notifier) Notify(a Alert) {
+	if n == nil {
 		return
 	}
 	select {
-	case s.ch <- a:
+	case n.ch <- a:
 	default: // file saturée : on préfère perdre une alerte que bloquer le trafic
 	}
 }
 
-func (s *Slack) worker() {
-	ticker := time.NewTicker(s.interval)
+func (n *Notifier) worker() {
+	ticker := time.NewTicker(n.interval)
 	defer ticker.Stop()
 
 	var pending []Alert
 	drain := func() {
 		for {
 			select {
-			case a := <-s.ch:
+			case a := <-n.ch:
 				pending = append(pending, a)
 			default:
 				return
@@ -141,40 +182,41 @@ func (s *Slack) worker() {
 
 	for {
 		select {
-		case a := <-s.ch:
+		case a := <-n.ch:
 			pending = append(pending, a)
-			// éviter une accumulation démesurée entre deux ticks
 			if len(pending) >= 200 {
 				drain()
-				s.flush(pending)
+				n.flush(pending)
 				pending = nil
 			}
 		case <-ticker.C:
 			drain()
 			if len(pending) > 0 {
-				s.flush(pending)
+				n.flush(pending)
 				pending = nil
 			}
-		case <-s.quit:
+		case <-n.quit:
 			drain()
 			if len(pending) > 0 {
-				s.flush(pending)
+				n.flush(pending)
 			}
 			return
 		}
 	}
 }
 
-// flush construit un message de synthèse et l'envoie (ignoré si pas de webhook).
-func (s *Slack) flush(alerts []Alert) {
-	url := s.currentWebhook()
-	if url == "" {
-		return // aucun webhook : on abandonne silencieusement le lot
+// flush construit un message de synthèse et l'envoie à toutes les destinations.
+func (n *Notifier) flush(alerts []Alert) {
+	slackURL := n.urlFor(KindSlack)
+	discordURL := n.urlFor(KindDiscord)
+	if slackURL == "" && discordURL == "" {
+		return // aucune destination : on abandonne silencieusement le lot
 	}
 
 	blocked, detected := 0, 0
 	byCat := map[string]int{}
 	byIP := map[string]int{}
+	byPath := map[string]int{}
 	for _, a := range alerts {
 		if a.Verdict == "blocked" {
 			blocked++
@@ -185,29 +227,129 @@ func (s *Slack) flush(alerts []Alert) {
 			byCat[c]++
 		}
 		byIP[a.ClientIP]++
+		if a.Path != "" {
+			byPath[a.Path]++
+		}
 	}
 
-	text := fmt.Sprintf("🛡️ *Sentinel WAF* — %d attaque(s) détectée(s) (dernières %s)\n",
-		len(alerts), s.interval)
-	text += fmt.Sprintf("• Bloquées : %d · Laissées passer (surveillance) : %d\n", blocked, detected)
-	if len(byCat) > 0 {
-		text += "• Catégories : " + topCounts(byCat, 6) + "\n"
-	}
-	if len(byIP) > 0 {
-		text += "• Top IP : " + topCounts(byIP, 5)
-	}
+	sev := severityFor(byCat, blocked)
+	window := n.interval.String()
+	cats := topCounts(byCat, 6)
+	ips := topCounts(byIP, 5)
+	paths := topCounts(byPath, 5)
+	verdict := fmt.Sprintf("%d bloquée(s) · %d surveillance", blocked, detected)
+	when := time.Now().UTC().Format(time.RFC3339)
 
-	if err := s.post(url, text); err != nil {
-		s.log.Warn("envoi alerte Slack échoué", "err", err)
+	// Repli texte (utilisé si la plateforme ignore le format riche).
+	fallback := fmt.Sprintf("🛡️ Sentinel WAF — %d attaque(s) en %s | Gravité %s | %s",
+		len(alerts), window, sev.label, verdict)
+
+	if slackURL != "" {
+		payload := buildSlackPayload(sev, len(alerts), window, verdict, cats, ips, paths, fallback)
+		if err := n.postJSON(slackURL, payload); err != nil {
+			n.log.Warn("envoi alerte Slack échoué", "err", err)
+		}
+	}
+	if discordURL != "" {
+		payload := buildDiscordPayload(sev, len(alerts), window, verdict, cats, ips, paths, when)
+		if err := n.postJSON(discordURL, payload); err != nil {
+			n.log.Warn("envoi alerte Discord échoué", "err", err)
+		}
+	}
+}
+
+// severity décrit le niveau de gravité et ses couleurs par plateforme.
+type severity struct {
+	label        string
+	discordColor int    // couleur décimale (embed Discord)
+	slackColor   string // couleur hex (attachment Slack)
+	emoji        string
+}
+
+// severityFor déduit la gravité des catégories vues et du nombre de blocages.
+func severityFor(byCat map[string]int, blocked int) severity {
+	high := map[string]bool{
+		"sqli": true, "cmd_injection": true, "brute_force": true,
+		"ssrf": true, "sensitive_path": true,
+	}
+	critical := false
+	for c := range byCat {
+		if high[c] {
+			critical = true
+			break
+		}
+	}
+	switch {
+	case critical && blocked > 0:
+		return severity{"ÉLEVÉE", 0xE23D43, "#E23D43", "🔴"}
+	case blocked > 0:
+		return severity{"MODÉRÉE", 0xD9820A, "#D9820A", "🟠"}
+	default:
+		return severity{"SURVEILLANCE", 0xEAB308, "#EAB308", "🟡"}
+	}
+}
+
+// buildDiscordPayload construit un embed Discord coloré.
+func buildDiscordPayload(sev severity, count int, window, verdict, cats, ips, paths, when string) map[string]any {
+	fields := []map[string]any{
+		{"name": "Gravité", "value": sev.emoji + " " + sev.label, "inline": true},
+		{"name": "Fenêtre", "value": window, "inline": true},
+		{"name": "Verdict", "value": verdict, "inline": false},
+	}
+	if cats != "" {
+		fields = append(fields, map[string]any{"name": "Catégories", "value": cats, "inline": true})
+	}
+	if ips != "" {
+		fields = append(fields, map[string]any{"name": "Sources (IP)", "value": ips, "inline": true})
+	}
+	if paths != "" {
+		fields = append(fields, map[string]any{"name": "Cibles", "value": paths, "inline": false})
+	}
+	return map[string]any{
+		"embeds": []map[string]any{{
+			"title":     fmt.Sprintf("🛡️ Sentinel WAF — %d attaque(s) détectée(s)", count),
+			"color":     sev.discordColor,
+			"fields":    fields,
+			"footer":    map[string]any{"text": "Sentinel WAF"},
+			"timestamp": when,
+		}},
+	}
+}
+
+// buildSlackPayload construit un attachment Slack coloré.
+func buildSlackPayload(sev severity, count int, window, verdict, cats, ips, paths, fallback string) map[string]any {
+	fields := []map[string]any{
+		{"title": "Gravité", "value": sev.emoji + " " + sev.label, "short": true},
+		{"title": "Fenêtre", "value": window, "short": true},
+		{"title": "Verdict", "value": verdict, "short": false},
+	}
+	if cats != "" {
+		fields = append(fields, map[string]any{"title": "Catégories", "value": cats, "short": true})
+	}
+	if ips != "" {
+		fields = append(fields, map[string]any{"title": "Sources (IP)", "value": ips, "short": true})
+	}
+	if paths != "" {
+		fields = append(fields, map[string]any{"title": "Cibles", "value": paths, "short": false})
+	}
+	return map[string]any{
+		"text": fallback,
+		"attachments": []map[string]any{{
+			"color":  sev.slackColor,
+			"title":  fmt.Sprintf("🛡️ Sentinel WAF — %d attaque(s) détectée(s)", count),
+			"fields": fields,
+			"footer": "Sentinel WAF",
+			"ts":     time.Now().Unix(),
+		}},
 	}
 }
 
 // Close vide la file restante et arrête le worker.
-func (s *Slack) Close() {
-	if s == nil {
+func (n *Notifier) Close() {
+	if n == nil {
 		return
 	}
-	close(s.quit)
+	close(n.quit)
 	time.Sleep(200 * time.Millisecond)
 }
 
@@ -218,8 +360,8 @@ func topCounts(m map[string]int, limit int) string {
 		n int
 	}
 	var arr []kv
-	for k, n := range m {
-		arr = append(arr, kv{k, n})
+	for k, v := range m {
+		arr = append(arr, kv{k, v})
 	}
 	sort.Slice(arr, func(i, j int) bool { return arr[i].n > arr[j].n })
 	out := ""
