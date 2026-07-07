@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -29,8 +30,11 @@ type Config struct {
 	Model   string // ex : meta/llama-3.3-70b-instruct
 }
 
-// Client interroge l'API de complétion.
+// Client interroge l'API de complétion. Sa configuration est modifiable à chaud
+// (depuis le dashboard), protégée par un mutex.
 type Client struct {
+	mu      sync.RWMutex
+	enabled bool
 	baseURL string
 	apiKey  string
 	model   string
@@ -38,23 +42,36 @@ type Client struct {
 	http    *http.Client
 }
 
-// New crée le client, ou renvoie nil si l'enrichissement est désactivé ou mal
-// configuré (auquel cas Enabled() renvoie false et aucun appel n'est fait).
+// New crée le client (toujours non-nil). Il n'appelle l'API que si la
+// configuration est complète et activée (voir Enabled).
 func New(cfg Config, log *slog.Logger) *Client {
-	if !cfg.Enabled || cfg.APIKey == "" || cfg.BaseURL == "" || cfg.Model == "" {
-		return nil
-	}
-	return &Client{
-		baseURL: strings.TrimRight(cfg.BaseURL, "/"),
-		apiKey:  cfg.APIKey,
-		model:   cfg.Model,
-		log:     log,
-		http:    &http.Client{Timeout: 20 * time.Second},
-	}
+	c := &Client{log: log, http: &http.Client{Timeout: 20 * time.Second}}
+	c.SetConfig(cfg)
+	return c
 }
 
-// Enabled indique si l'enrichissement est actif.
-func (c *Client) Enabled() bool { return c != nil }
+// SetConfig applique une nouvelle configuration à chaud.
+func (c *Client) SetConfig(cfg Config) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.enabled = cfg.Enabled && cfg.APIKey != "" && cfg.BaseURL != "" && cfg.Model != ""
+	c.baseURL = strings.TrimRight(cfg.BaseURL, "/")
+	c.apiKey = cfg.APIKey
+	c.model = cfg.Model
+}
+
+// Enabled indique si l'enrichissement est actif et complètement configuré.
+func (c *Client) Enabled() bool {
+	if c == nil {
+		return false
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.enabled
+}
 
 // Summary décrit un épisode d'attaques agrégé à analyser.
 type Summary struct {
@@ -78,12 +95,18 @@ func (c *Client) Analyze(ctx context.Context, s Summary) (string, error) {
 	if c == nil {
 		return "", fmt.Errorf("enrichissement désactivé")
 	}
+	c.mu.RLock()
+	enabled, baseURL, apiKey, model := c.enabled, c.baseURL, c.apiKey, c.model
+	c.mu.RUnlock()
+	if !enabled {
+		return "", fmt.Errorf("enrichissement désactivé")
+	}
 	user := fmt.Sprintf(
 		"Épisode d'attaques (fenêtre : %s)\n- Total : %d (bloquées : %d, surveillance : %d)\n- Catégories : %s\n- Sources (IP) : %s\n- Cibles (URL) : %s",
 		s.Window, s.Count, s.Blocked, s.Detected, orNone(s.Categories), orNone(s.TopIPs), orNone(s.TopPaths))
 
 	payload := map[string]any{
-		"model": c.model,
+		"model": model,
 		"messages": []map[string]string{
 			{"role": "system", "content": systemPrompt},
 			{"role": "user", "content": user},
@@ -93,12 +116,12 @@ func (c *Client) Analyze(ctx context.Context, s Summary) (string, error) {
 	}
 	body, _ := json.Marshal(payload)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Authorization", "Bearer "+apiKey)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -123,6 +146,15 @@ func (c *Client) Analyze(ctx context.Context, s Summary) (string, error) {
 		return "", fmt.Errorf("réponse LLM vide")
 	}
 	return strings.TrimSpace(out.Choices[0].Message.Content), nil
+}
+
+// Test vérifie la configuration en demandant une courte analyse d'exemple.
+func (c *Client) Test(ctx context.Context) error {
+	_, err := c.Analyze(ctx, Summary{
+		Count: 1, Blocked: 1, Window: "test",
+		Categories: "sqli (1)", TopIPs: "203.0.113.10 (1)", TopPaths: "/login (1)",
+	})
+	return err
 }
 
 func orNone(s string) string {

@@ -19,6 +19,10 @@ type Settings struct {
 	blocklist      map[string]bool
 	slackWebhook   string
 	discordWebhook string
+	llmEnabled     bool
+	llmBaseURL     string
+	llmModel       string
+	llmAPIKey      string
 	store          *storage.Store
 }
 
@@ -74,6 +78,22 @@ func (s *Settings) load() {
 	var dwh string
 	if ok, _ := s.store.LoadSetting("discord_webhook", &dwh); ok {
 		s.discordWebhook = dwh
+	}
+	var le bool
+	if ok, _ := s.store.LoadSetting("llm_enabled", &le); ok {
+		s.llmEnabled = le
+	}
+	var lu string
+	if ok, _ := s.store.LoadSetting("llm_base_url", &lu); ok {
+		s.llmBaseURL = lu
+	}
+	var lm string
+	if ok, _ := s.store.LoadSetting("llm_model", &lm); ok {
+		s.llmModel = lm
+	}
+	var lk string
+	if ok, _ := s.store.LoadSetting("llm_api_key", &lk); ok {
+		s.llmAPIKey = lk
 	}
 }
 
@@ -183,6 +203,46 @@ func (s *Settings) SetDiscordWebhook(url string) {
 	_ = s.store.SaveSetting("discord_webhook", url)
 }
 
+// LLMSettings est la configuration d'enrichissement IA exposée en interne.
+type LLMSettings struct {
+	Enabled bool
+	BaseURL string
+	Model   string
+	APIKey  string
+}
+
+// LLM renvoie la configuration LLM courante.
+func (s *Settings) LLM() LLMSettings {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return LLMSettings{s.llmEnabled, s.llmBaseURL, s.llmModel, s.llmAPIKey}
+}
+
+// LLMConfigured indique qu'une configuration LLM a déjà été posée (base ou dashboard).
+func (s *Settings) LLMConfigured() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.llmBaseURL != "" || s.llmAPIKey != "" || s.llmModel != ""
+}
+
+// SetLLM met à jour la configuration LLM (persistée). Une clé vide est ignorée
+// (on conserve la clé existante) pour ne pas l'effacer par inadvertance.
+func (s *Settings) SetLLM(enabled bool, baseURL, model, apiKey string) {
+	s.mu.Lock()
+	s.llmEnabled = enabled
+	s.llmBaseURL = baseURL
+	s.llmModel = model
+	if apiKey != "" {
+		s.llmAPIKey = apiKey
+	}
+	key := s.llmAPIKey
+	s.mu.Unlock()
+	_ = s.store.SaveSetting("llm_enabled", enabled)
+	_ = s.store.SaveSetting("llm_base_url", baseURL)
+	_ = s.store.SaveSetting("llm_model", model)
+	_ = s.store.SaveSetting("llm_api_key", key)
+}
+
 func (s *Settings) setBlock(ip string, on bool) {
 	if ip == "" {
 		return
@@ -224,5 +284,9 @@ func (s *Settings) Snapshot() map[string]any {
 		"blocklist":           bl,
 		"slack_webhook_set":   s.slackWebhook != "",
 		"discord_webhook_set": s.discordWebhook != "",
+		"llm_enabled":         s.llmEnabled,
+		"llm_base_url":        s.llmBaseURL,
+		"llm_model":           s.llmModel,
+		"llm_key_set":         s.llmAPIKey != "",
 	}
 }

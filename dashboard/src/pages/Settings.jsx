@@ -11,6 +11,11 @@ export default function Settings() {
   const [discordHook, setDiscordHook] = useState('')
   const [discordMsg, setDiscordMsg] = useState(null)
   const [discordBusy, setDiscordBusy] = useState(false)
+  const [llmUrl, setLlmUrl] = useState('')
+  const [llmModel, setLlmModel] = useState('')
+  const [llmKey, setLlmKey] = useState('')
+  const [llmMsg, setLlmMsg] = useState(null)
+  const [llmBusy, setLlmBusy] = useState(false)
   const [pwOld, setPwOld] = useState('')
   const [pwNew, setPwNew] = useState('')
   const [pwConfirm, setPwConfirm] = useState('')
@@ -82,6 +87,33 @@ export default function Settings() {
     } catch (e) {
       setDiscordMsg({ ok: false, text: String(e.message || e).slice(0, 140) })
     } finally { setDiscordBusy(false) }
+  }
+
+  async function saveLlm(enabled) {
+    setLlmBusy(true); setLlmMsg(null)
+    try {
+      const body = { llm_enabled: enabled }
+      if (llmUrl.trim()) body.llm_base_url = llmUrl.trim()
+      if (llmModel.trim()) body.llm_model = llmModel.trim()
+      if (llmKey.trim()) body.llm_api_key = llmKey.trim()
+      await api.setSettings(body)
+      setLlmKey('')
+      setLlmMsg({ ok: true, text: enabled ? 'Configuration enregistrée.' : 'Enrichissement désactivé.' })
+      refresh()
+    } catch (e) {
+      setLlmMsg({ ok: false, text: String(e.message || e).slice(0, 140) })
+    } finally { setLlmBusy(false) }
+  }
+  async function testLlm() {
+    setLlmBusy(true); setLlmMsg(null)
+    try {
+      const r = await api.llmTest()
+      setLlmMsg(r.ok
+        ? { ok: true, text: 'Analyse de test réussie ✅ L’IA répond correctement.' }
+        : { ok: false, text: 'Échec : ' + (r.error || 'vérifiez la clé, l’URL et le crédit.') })
+    } catch (e) {
+      setLlmMsg({ ok: false, text: String(e.message || e).slice(0, 140) })
+    } finally { setLlmBusy(false) }
   }
 
   async function changePassword() {
@@ -226,6 +258,52 @@ export default function Settings() {
           )}
         </div>
       </div>
+
+      {/* Enrichissement IA */}
+      <div className="card" style={{ marginTop: 18 }}>
+        <div className="card-h">
+          <h3>Enrichissement IA</h3>
+          <span className={`hint ${s.llm_enabled && s.llm_key_set ? 'ok-hint' : ''}`}>
+            {s.llm_enabled && s.llm_key_set ? '● Actif' : (s.llm_key_set ? '○ Configuré (désactivé)' : '○ Non configuré')}
+          </span>
+        </div>
+        <div className="card-b">
+          <div className="field-h" style={{ marginTop: 0, marginBottom: 12 }}>
+            Ajoute à chaque alerte une analyse en langage naturel rédigée par une IA
+            (nature de l'attaque, risque, recommandation). Compatible avec toute API
+            de type OpenAI : Groq (gratuit), RodiumAI, OpenAI, Ollama… La clé reste
+            secrète (jamais réaffichée).
+          </div>
+          <div className="form">
+            <div className="full">
+              <label>URL de base de l'API</label>
+              <input type="text" value={llmUrl} onChange={(e) => setLlmUrl(e.target.value)}
+                placeholder={s.llm_base_url || 'https://api.groq.com/openai/v1'} />
+            </div>
+            <div className="full">
+              <label>Modèle</label>
+              <input type="text" value={llmModel} onChange={(e) => setLlmModel(e.target.value)}
+                placeholder={s.llm_model || 'llama-3.3-70b-versatile'} />
+            </div>
+            <div className="full">
+              <label>Clé API {s.llm_key_set && <span className="hint ok-hint">(enregistrée)</span>}</label>
+              <input type="password" value={llmKey} onChange={(e) => setLlmKey(e.target.value)}
+                placeholder={s.llm_key_set ? '•••••••• (clé enregistrée)' : 'gsk_… / sk-… / rd_sk_…'} />
+            </div>
+            {llmMsg && (
+              <div className="full" style={{ fontSize: 12, color: llmMsg.ok ? 'var(--safe)' : 'var(--threat)' }}>{llmMsg.text}</div>
+            )}
+            <div className="full" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button className="btn accent" onClick={() => saveLlm(true)} disabled={llmBusy}>Enregistrer &amp; activer</button>
+              <button className="btn" onClick={testLlm} disabled={llmBusy || !s.llm_key_set}>Tester</button>
+              {s.llm_enabled && (
+                <button className="btn" onClick={() => saveLlm(false)} disabled={llmBusy}>Désactiver</button>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Compte administrateur */}
       <div className="card" style={{ marginTop: 18 }}>
         <div className="card-h"><h3>Compte administrateur</h3></div>

@@ -44,6 +44,7 @@ export const api = {
   setSettings: (body) => post('/settings', body),
   slackTest: () => post('/slack/test', {}),
   discordTest: () => post('/discord/test', {}),
+  llmTest: () => post('/llm/test', {}),
   blocklist: (ip, action) => post('/blocklist', { ip, action }),
   addApp: (app) => post('/apps', app),
   updateApp: (id, mode, threshold) =>

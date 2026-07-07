@@ -94,33 +94,38 @@ func main() {
 
 	// Enrichissement IA (facultatif) : analyse des épisodes d'attaques en
 	// langage naturel via une API compatible OpenAI. Hors chemin des requêtes.
+	// Priorité au dashboard (persisté) ; le .env sert d'amorce au 1er démarrage.
+	if !settings.LLMConfigured() && (cfg.LLMAPIKey != "" || cfg.LLMBaseURL != "") {
+		settings.SetLLM(cfg.LLMEnabled, cfg.LLMBaseURL, cfg.LLMModel, cfg.LLMAPIKey)
+	}
+	lc := settings.LLM()
 	enr := enricher.New(enricher.Config{
-		Enabled: cfg.LLMEnabled,
-		BaseURL: cfg.LLMBaseURL,
-		APIKey:  cfg.LLMAPIKey,
-		Model:   cfg.LLMModel,
+		Enabled: lc.Enabled, BaseURL: lc.BaseURL, APIKey: lc.APIKey, Model: lc.Model,
 	}, log)
 	if enr.Enabled() {
-		log.Info("enrichissement IA actif", "modele", cfg.LLMModel)
-		analyze := func(count, blocked, detected int, window, cats, ips, paths string) (string, error) {
-			ctx, cancel := context.WithTimeout(context.Background(), 18*time.Second)
-			defer cancel()
-			return enr.Analyze(ctx, enricher.Summary{
-				Count: count, Blocked: blocked, Detected: detected,
-				Window: window, Categories: cats, TopIPs: ips, TopPaths: paths,
+		log.Info("enrichissement IA actif", "modele", lc.Model)
+	} else {
+		log.Info("enrichissement IA désactivé (configurable depuis le dashboard)")
+	}
+	analyze := func(count, blocked, detected int, window, cats, ips, paths string) (string, error) {
+		if !enr.Enabled() {
+			return "", nil // silencieux si désactivé
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 18*time.Second)
+		defer cancel()
+		return enr.Analyze(ctx, enricher.Summary{
+			Count: count, Blocked: blocked, Detected: detected,
+			Window: window, Categories: cats, TopIPs: ips, TopPaths: paths,
+		})
+	}
+	save := func(text string) {
+		if store != nil {
+			_ = store.SaveSetting("latest_analysis", map[string]any{
+				"text": text, "ts": time.Now().UTC().Format(time.RFC3339),
 			})
 		}
-		save := func(text string) {
-			if store != nil {
-				_ = store.SaveSetting("latest_analysis", map[string]any{
-					"text": text, "ts": time.Now().UTC().Format(time.RFC3339),
-				})
-			}
-		}
-		notif.SetEnricher(analyze, save)
-	} else {
-		log.Info("enrichissement IA désactivé (définir LLM_ENABLED, LLM_API_KEY, LLM_MODEL pour l'activer)")
 	}
+	notif.SetEnricher(analyze, save)
 
 	// Routeur multi-application : chargé depuis la base, rechargé à chaud.
 	router := proxy.NewRouter()
@@ -303,6 +308,10 @@ func main() {
 				EnabledCategories *[]string `json:"enabled_categories"`
 				SlackWebhook      *string   `json:"slack_webhook"`
 				DiscordWebhook    *string   `json:"discord_webhook"`
+				LLMEnabled        *bool     `json:"llm_enabled"`
+				LLMBaseURL        *string   `json:"llm_base_url"`
+				LLMModel          *string   `json:"llm_model"`
+				LLMAPIKey         *string   `json:"llm_api_key"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				http.Error(w, "corps JSON invalide", http.StatusBadRequest)
@@ -325,10 +334,49 @@ func main() {
 				settings.SetDiscordWebhook(*body.DiscordWebhook)
 				notif.SetWebhook(notifier.KindDiscord, *body.DiscordWebhook) // à chaud
 			}
+			// Configuration LLM (si l'un des champs est présent) : on applique et
+			// on reconfigure l'enricher à chaud. Clé vide = clé conservée.
+			if body.LLMEnabled != nil || body.LLMBaseURL != nil || body.LLMModel != nil || body.LLMAPIKey != nil {
+				cur := settings.LLM()
+				enabled := cur.Enabled
+				if body.LLMEnabled != nil {
+					enabled = *body.LLMEnabled
+				}
+				baseURL := cur.BaseURL
+				if body.LLMBaseURL != nil {
+					baseURL = *body.LLMBaseURL
+				}
+				model := cur.Model
+				if body.LLMModel != nil {
+					model = *body.LLMModel
+				}
+				key := ""
+				if body.LLMAPIKey != nil {
+					key = *body.LLMAPIKey // vide => conservée par SetLLM
+				}
+				settings.SetLLM(enabled, baseURL, model, key)
+				nc := settings.LLM()
+				enr.SetConfig(enricher.Config{Enabled: nc.Enabled, BaseURL: nc.BaseURL, APIKey: nc.APIKey, Model: nc.Model})
+			}
 			writeJSON(w, settings.Snapshot())
 		default:
 			http.Error(w, "méthode non supportée", http.StatusMethodNotAllowed)
 		}
+	})
+
+	// --- Test de l'enrichissement IA : /_sentinel/llm/test ---
+	mux.HandleFunc("/_sentinel/llm/test", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "méthode non supportée", http.StatusMethodNotAllowed)
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		if err := enr.Test(ctx); err != nil {
+			writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true})
 	})
 
 	// --- Test d'alerte (envoi immédiat) : /_sentinel/{slack,discord}/test ---
