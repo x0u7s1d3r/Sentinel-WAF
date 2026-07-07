@@ -22,6 +22,7 @@ import (
 	"sentinel-waf/internal/auth"
 	"sentinel-waf/internal/config"
 	"sentinel-waf/internal/detector"
+	"sentinel-waf/internal/enricher"
 	"sentinel-waf/internal/notifier"
 	"sentinel-waf/internal/proxy"
 	"sentinel-waf/internal/storage"
@@ -89,6 +90,36 @@ func main() {
 			"discord", notif.Configured(notifier.KindDiscord), "intervalle", alertInterval)
 	} else {
 		log.Info("alertes en attente d'un webhook (configurable depuis le dashboard)")
+	}
+
+	// Enrichissement IA (facultatif) : analyse des épisodes d'attaques en
+	// langage naturel via une API compatible OpenAI. Hors chemin des requêtes.
+	enr := enricher.New(enricher.Config{
+		Enabled: cfg.LLMEnabled,
+		BaseURL: cfg.LLMBaseURL,
+		APIKey:  cfg.LLMAPIKey,
+		Model:   cfg.LLMModel,
+	}, log)
+	if enr.Enabled() {
+		log.Info("enrichissement IA actif", "modele", cfg.LLMModel)
+		analyze := func(count, blocked, detected int, window, cats, ips, paths string) (string, error) {
+			ctx, cancel := context.WithTimeout(context.Background(), 18*time.Second)
+			defer cancel()
+			return enr.Analyze(ctx, enricher.Summary{
+				Count: count, Blocked: blocked, Detected: detected,
+				Window: window, Categories: cats, TopIPs: ips, TopPaths: paths,
+			})
+		}
+		save := func(text string) {
+			if store != nil {
+				_ = store.SaveSetting("latest_analysis", map[string]any{
+					"text": text, "ts": time.Now().UTC().Format(time.RFC3339),
+				})
+			}
+		}
+		notif.SetEnricher(analyze, save)
+	} else {
+		log.Info("enrichissement IA désactivé (définir LLM_ENABLED, LLM_API_KEY, LLM_MODEL pour l'activer)")
 	}
 
 	// Routeur multi-application : chargé depuis la base, rechargé à chaud.

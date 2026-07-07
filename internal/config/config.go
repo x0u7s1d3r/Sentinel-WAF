@@ -31,6 +31,13 @@ type Config struct {
 	// (SENTINEL_ADMIN_PASSWORD). Sert à créer/réinitialiser le compte ; seul
 	// son hachage est stocké, jamais le mot de passe en clair.
 	AdminPassword string `json:"-"`
+	// --- Enrichissement IA des alertes (facultatif) ---
+	// API de complétion compatible OpenAI (RodiumAI, Groq, OpenAI, Ollama…).
+	// La clé est un secret fourni par l'environnement, jamais versionné.
+	LLMEnabled bool   `json:"-"`
+	LLMBaseURL string `json:"-"`
+	LLMAPIKey  string `json:"-"`
+	LLMModel   string `json:"-"`
 }
 
 // Default fournit une configuration raisonnable si aucun fichier n'est fourni.
@@ -95,5 +102,17 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("SENTINEL_ADMIN_PASSWORD"); v != "" {
 		cfg.AdminPassword = v
+	}
+	if v := os.Getenv("LLM_ENABLED"); v == "true" || v == "1" {
+		cfg.LLMEnabled = true
+	}
+	if v := os.Getenv("LLM_BASE_URL"); v != "" {
+		cfg.LLMBaseURL = v
+	}
+	if v := os.Getenv("LLM_API_KEY"); v != "" {
+		cfg.LLMAPIKey = v
+	}
+	if v := os.Getenv("LLM_MODEL"); v != "" {
+		cfg.LLMModel = v
 	}
 }

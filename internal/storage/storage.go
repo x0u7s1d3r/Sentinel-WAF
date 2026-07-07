@@ -1,13 +1,13 @@
 // Package storage assure la persistance des événements du WAF dans PostgreSQL.
 //
 // Deux principes guident ce paquet :
-//   1. Écriture ASYNCHRONE : le proxy ne doit jamais attendre la base. Les
-//      événements sont poussés dans un canal tamponné qu'un worker vide en
-//      arrière-plan ; si le tampon est plein, on abandonne l'événement plutôt
-//      que de ralentir le trafic.
-//   2. Dégradation GRACIEUSE : si la base est indisponible, le WAF continue de
-//      protéger (les événements sont simplement non persistés). La sécurité ne
-//      dépend jamais de la disponibilité de la base.
+//  1. Écriture ASYNCHRONE : le proxy ne doit jamais attendre la base. Les
+//     événements sont poussés dans un canal tamponné qu'un worker vide en
+//     arrière-plan ; si le tampon est plein, on abandonne l'événement plutôt
+//     que de ralentir le trafic.
+//  2. Dégradation GRACIEUSE : si la base est indisponible, le WAF continue de
+//     protéger (les événements sont simplement non persistés). La sécurité ne
+//     dépend jamais de la disponibilité de la base.
 package storage
 
 import (
@@ -452,6 +452,12 @@ func (s *Store) Analytics(app, rng string) (map[string]any, error) {
 	// 5) Bilan des verdicts (réutilise Stats, filtré par site).
 	if st, err := s.Stats(app); err == nil {
 		out["verdicts"] = st
+	}
+
+	// 6) Dernière analyse IA disponible (le cas échéant).
+	var ai map[string]any
+	if ok, _ := s.LoadSetting("latest_analysis", &ai); ok {
+		out["ai_analysis"] = ai
 	}
 
 	return out, nil

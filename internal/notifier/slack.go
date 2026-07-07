@@ -39,15 +39,35 @@ type Alert struct {
 // Notifier agrège les alertes et les diffuse vers les webhooks configurés.
 // Les webhooks sont modifiables à chaud (depuis le dashboard) : le notificateur
 // tourne toujours, et n'envoie que vers les destinations effectivement définies.
+// AnalyzeFunc produit une analyse en langage naturel d'un épisode d'attaques.
+// Fournie par le module d'enrichissement (peut être nil = pas d'IA).
+type AnalyzeFunc func(count, blocked, detected int, window, cats, ips, paths string) (string, error)
+
+// SaveAnalysisFunc persiste la dernière analyse (pour l'afficher au dashboard).
+type SaveAnalysisFunc func(text string)
+
 type Notifier struct {
-	mu         sync.RWMutex
-	slackURL   string
-	discordURL string
-	interval   time.Duration
-	ch         chan Alert
-	quit       chan struct{}
-	log        *slog.Logger
-	client     *http.Client
+	mu           sync.RWMutex
+	slackURL     string
+	discordURL   string
+	interval     time.Duration
+	ch           chan Alert
+	quit         chan struct{}
+	log          *slog.Logger
+	client       *http.Client
+	analyze      AnalyzeFunc
+	saveAnalysis SaveAnalysisFunc
+}
+
+// SetEnricher branche l'analyse IA (appelée en arrière-plan, hors trafic).
+func (n *Notifier) SetEnricher(analyze AnalyzeFunc, save SaveAnalysisFunc) {
+	if n == nil {
+		return
+	}
+	n.mu.Lock()
+	n.analyze = analyze
+	n.saveAnalysis = save
+	n.mu.Unlock()
 }
 
 // New crée le notificateur. Il tourne toujours (même sans webhook) ; sans
@@ -240,18 +260,35 @@ func (n *Notifier) flush(alerts []Alert) {
 	verdict := fmt.Sprintf("%d bloquée(s) · %d surveillance", blocked, detected)
 	when := time.Now().UTC().Format(time.RFC3339)
 
+	// Analyse IA de l'épisode (en arrière-plan, hors chemin des requêtes).
+	// En cas d'absence/erreur/lenteur, on continue sans analyse.
+	analysis := ""
+	n.mu.RLock()
+	analyze, saveAnalysis := n.analyze, n.saveAnalysis
+	n.mu.RUnlock()
+	if analyze != nil {
+		if txt, err := analyze(len(alerts), blocked, detected, window, cats, ips, paths); err != nil {
+			n.log.Warn("analyse IA indisponible", "err", err)
+		} else if txt != "" {
+			analysis = txt
+			if saveAnalysis != nil {
+				saveAnalysis(txt)
+			}
+		}
+	}
+
 	// Repli texte (utilisé si la plateforme ignore le format riche).
 	fallback := fmt.Sprintf("🛡️ Sentinel WAF — %d attaque(s) en %s | Gravité %s | %s",
 		len(alerts), window, sev.label, verdict)
 
 	if slackURL != "" {
-		payload := buildSlackPayload(sev, len(alerts), window, verdict, cats, ips, paths, fallback)
+		payload := buildSlackPayload(sev, len(alerts), window, verdict, cats, ips, paths, analysis, fallback)
 		if err := n.postJSON(slackURL, payload); err != nil {
 			n.log.Warn("envoi alerte Slack échoué", "err", err)
 		}
 	}
 	if discordURL != "" {
-		payload := buildDiscordPayload(sev, len(alerts), window, verdict, cats, ips, paths, when)
+		payload := buildDiscordPayload(sev, len(alerts), window, verdict, cats, ips, paths, analysis, when)
 		if err := n.postJSON(discordURL, payload); err != nil {
 			n.log.Warn("envoi alerte Discord échoué", "err", err)
 		}
@@ -290,7 +327,7 @@ func severityFor(byCat map[string]int, blocked int) severity {
 }
 
 // buildDiscordPayload construit un embed Discord coloré.
-func buildDiscordPayload(sev severity, count int, window, verdict, cats, ips, paths, when string) map[string]any {
+func buildDiscordPayload(sev severity, count int, window, verdict, cats, ips, paths, analysis, when string) map[string]any {
 	fields := []map[string]any{
 		{"name": "Gravité", "value": sev.emoji + " " + sev.label, "inline": true},
 		{"name": "Fenêtre", "value": window, "inline": true},
@@ -305,6 +342,9 @@ func buildDiscordPayload(sev severity, count int, window, verdict, cats, ips, pa
 	if paths != "" {
 		fields = append(fields, map[string]any{"name": "Cibles", "value": paths, "inline": false})
 	}
+	if analysis != "" {
+		fields = append(fields, map[string]any{"name": "🧠 Analyse IA", "value": truncate(analysis, 1000), "inline": false})
+	}
 	return map[string]any{
 		"embeds": []map[string]any{{
 			"title":     fmt.Sprintf("🛡️ Sentinel WAF — %d attaque(s) détectée(s)", count),
@@ -317,7 +357,7 @@ func buildDiscordPayload(sev severity, count int, window, verdict, cats, ips, pa
 }
 
 // buildSlackPayload construit un attachment Slack coloré.
-func buildSlackPayload(sev severity, count int, window, verdict, cats, ips, paths, fallback string) map[string]any {
+func buildSlackPayload(sev severity, count int, window, verdict, cats, ips, paths, analysis, fallback string) map[string]any {
 	fields := []map[string]any{
 		{"title": "Gravité", "value": sev.emoji + " " + sev.label, "short": true},
 		{"title": "Fenêtre", "value": window, "short": true},
@@ -332,6 +372,9 @@ func buildSlackPayload(sev severity, count int, window, verdict, cats, ips, path
 	if paths != "" {
 		fields = append(fields, map[string]any{"title": "Cibles", "value": paths, "short": false})
 	}
+	if analysis != "" {
+		fields = append(fields, map[string]any{"title": "🧠 Analyse IA", "value": truncate(analysis, 1500), "short": false})
+	}
 	return map[string]any{
 		"text": fallback,
 		"attachments": []map[string]any{{
@@ -342,6 +385,14 @@ func buildSlackPayload(sev severity, count int, window, verdict, cats, ips, path
 			"ts":     time.Now().Unix(),
 		}},
 	}
+}
+
+// truncate borne une chaîne (limites de taille des embeds/attachments).
+func truncate(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max-1] + "…"
 }
 
 // Close vide la file restante et arrête le worker.

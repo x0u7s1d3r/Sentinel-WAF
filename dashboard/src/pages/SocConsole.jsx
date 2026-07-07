@@ -80,6 +80,7 @@ export default function SocConsole() {
   const cats = a.by_category || []
   const topIps = a.top_ips || []
   const topPaths = a.top_paths || []
+  const aiAnalysis = a.ai_analysis || null
 
   const st = settings || {}
   const enabled = new Set(st.enabled_categories || [])
@@ -199,6 +200,16 @@ export default function SocConsole() {
           )}
         </div>
       </div>
+
+      {aiAnalysis && aiAnalysis.text && (
+        <div className="ai-card">
+          <div className="ai-head">
+            <span className="ai-badge">🧠 Analyse IA</span>
+            {aiAnalysis.ts && <span className="ai-time">{new Date(aiAnalysis.ts).toLocaleString('fr-FR')}</span>}
+          </div>
+          <p className="ai-text">{aiAnalysis.text}</p>
+        </div>
+      )}
 
       <div className="soc-cols">
         {/* Répartition par catégorie */}
