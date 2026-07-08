@@ -14,6 +14,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -39,6 +40,9 @@ type Store struct {
 	db   *sql.DB
 	ch   chan Event
 	quit chan struct{}
+	// Rétention des événements : le plus strict des deux s'applique.
+	retentionDays    int // supprime les événements plus vieux que N jours (0 = illimité)
+	retentionMaxRows int // conserve au plus N événements récents (0 = illimité)
 }
 
 const schema = `
@@ -94,9 +98,77 @@ func Open(dsn string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	s := &Store{db: db, ch: make(chan Event, 1024), quit: make(chan struct{})}
+	s := &Store{
+		db:               db,
+		ch:               make(chan Event, 1024),
+		quit:             make(chan struct{}),
+		retentionDays:    30,     // défauts sûrs ; surchargés par SetRetention
+		retentionMaxRows: 100000, // ceinture + bretelles contre l'explosion de la base
+	}
 	go s.worker()
+	go s.retentionWorker()
 	return s, nil
+}
+
+// SetRetention configure la politique de rétention (0 = illimité pour chacune).
+// Le plus strict des deux critères s'applique lors de la purge.
+func (s *Store) SetRetention(days, maxRows int) {
+	if s == nil {
+		return
+	}
+	if days >= 0 {
+		s.retentionDays = days
+	}
+	if maxRows >= 0 {
+		s.retentionMaxRows = maxRows
+	}
+}
+
+// retentionWorker purge périodiquement les vieux événements (hors chemin des
+// requêtes). En cas d'échec, on journalise et on réessaie au cycle suivant :
+// la purge ne doit jamais impacter la protection.
+func (s *Store) retentionWorker() {
+	// Première purge peu après le démarrage, puis toutes les heures.
+	timer := time.NewTimer(2 * time.Minute)
+	defer timer.Stop()
+	for {
+		select {
+		case <-s.quit:
+			return
+		case <-timer.C:
+			s.purge()
+			timer.Reset(time.Hour)
+		}
+	}
+}
+
+// purge applique les deux limites de rétention.
+func (s *Store) purge() {
+	if s == nil || s.db == nil {
+		return
+	}
+	// 1) Par ancienneté.
+	if s.retentionDays > 0 {
+		q := fmt.Sprintf("DELETE FROM events WHERE ts < now() - interval '%d days'", s.retentionDays)
+		if res, err := s.db.Exec(q); err != nil {
+			slog.Warn("purge par ancienneté échouée", "err", err)
+		} else if n, _ := res.RowsAffected(); n > 0 {
+			slog.Info("purge des événements (ancienneté)", "supprimés", n, "jours", s.retentionDays)
+		}
+	}
+	// 2) Par nombre : on ne garde que les N identifiants les plus récents.
+	if s.retentionMaxRows > 0 {
+		q := `DELETE FROM events WHERE id < (
+		         SELECT COALESCE(MIN(id), 0) FROM (
+		           SELECT id FROM events ORDER BY id DESC LIMIT $1
+		         ) keep
+		       )`
+		if res, err := s.db.Exec(q, s.retentionMaxRows); err != nil {
+			slog.Warn("purge par nombre échouée", "err", err)
+		} else if n, _ := res.RowsAffected(); n > 0 {
+			slog.Info("purge des événements (nombre max)", "supprimés", n, "max", s.retentionMaxRows)
+		}
+	}
 }
 
 // Log pousse un événement sans bloquer (abandonné si le tampon est saturé).

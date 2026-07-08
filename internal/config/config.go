@@ -38,15 +38,21 @@ type Config struct {
 	LLMBaseURL string `json:"-"`
 	LLMAPIKey  string `json:"-"`
 	LLMModel   string `json:"-"`
+	// --- Rétention des événements ---
+	// Le plus strict des deux s'applique. 0 = illimité. Défauts : 30 j / 100 000.
+	RetentionDays    int `json:"-"`
+	RetentionMaxRows int `json:"-"`
 }
 
 // Default fournit une configuration raisonnable si aucun fichier n'est fourni.
 func Default() Config {
 	return Config{
-		Listen:    ":8080",
-		Upstream:  "http://127.0.0.1:8000",
-		Mode:      "block",
-		Threshold: 4,
+		Listen:           ":8080",
+		Upstream:         "http://127.0.0.1:8000",
+		Mode:             "block",
+		Threshold:        4,
+		RetentionDays:    30,
+		RetentionMaxRows: 100000,
 	}
 }
 
@@ -114,5 +120,15 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("LLM_MODEL"); v != "" {
 		cfg.LLMModel = v
+	}
+	if v := os.Getenv("SENTINEL_RETENTION_DAYS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			cfg.RetentionDays = n
+		}
+	}
+	if v := os.Getenv("SENTINEL_RETENTION_MAX"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			cfg.RetentionMaxRows = n
+		}
 	}
 }

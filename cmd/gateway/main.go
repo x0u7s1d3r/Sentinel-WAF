@@ -44,6 +44,11 @@ func main() {
 	var store *storage.Store
 	if cfg.Database != "" {
 		store = openStoreWithRetry(cfg.Database, log)
+		if store != nil {
+			store.SetRetention(cfg.RetentionDays, cfg.RetentionMaxRows)
+			log.Info("rétention des événements",
+				"jours", cfg.RetentionDays, "max", cfg.RetentionMaxRows)
+		}
 	} else {
 		log.Info("aucune base configurée : persistance et multi-app désactivés")
 	}
