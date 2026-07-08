@@ -8,8 +8,11 @@ export default function Applications() {
   const [form, setForm] = useState(empty)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
+  const [editId, setEditId] = useState(null)
+  const [edit, setEdit] = useState(empty)
 
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value })
+  const setE = (k) => (e) => setEdit({ ...edit, [k]: e.target.value })
 
   async function add() {
     setErr('')
@@ -30,7 +33,31 @@ export default function Applications() {
   }
 
   async function remove(id) {
+    if (!confirm('Retirer cette application de la protection ?')) return
     await api.deleteApp(id)
+    refresh()
+  }
+
+  async function toggleMode(a) {
+    const next = a.mode === 'block' ? 'detect' : 'block'
+    await api.updateApp(a.id, { mode: next, threshold: a.threshold || 4 })
+    refresh()
+  }
+
+  function startEdit(a) {
+    setEditId(a.id)
+    setEdit({
+      name: a.name, domain: a.domain, upstream_url: a.upstream_url,
+      mode: a.mode, threshold: a.threshold || 4,
+    })
+  }
+
+  async function saveEdit(id) {
+    await api.updateApp(id, {
+      name: edit.name, domain: edit.domain, upstream_url: edit.upstream_url,
+      mode: edit.mode, threshold: Number(edit.threshold) || 4,
+    })
+    setEditId(null)
     refresh()
   }
 
@@ -48,13 +75,58 @@ export default function Applications() {
           <div className="empty">Aucune application. Ajoutez-en une pour la placer sous protection.</div>
         )}
         {(apps || []).map((a) => (
-          <div className="app-row" key={a.id}>
-            <span>{a.name}</span>
-            <span className="dom">{a.domain}</span>
-            <span className="up">{a.upstream_url}</span>
-            <span><span className={`badge ${a.mode}`}>{a.mode === 'block' ? 'Blocage' : 'Surveillance'}</span></span>
-            <button className="btn danger mini" onClick={() => remove(a.id)}>Retirer</button>
-          </div>
+          editId === a.id ? (
+            <div className="app-edit" key={a.id}>
+              <div className="form">
+                <div className="full">
+                  <label>Nom</label>
+                  <input value={edit.name} onChange={setE('name')} />
+                </div>
+                <div className="full">
+                  <label>Domaine (en-tête Host)</label>
+                  <input value={edit.domain} onChange={setE('domain')} />
+                </div>
+                <div className="full">
+                  <label>Backend à protéger (URL)</label>
+                  <input value={edit.upstream_url} onChange={setE('upstream_url')} />
+                </div>
+                <div>
+                  <label>Mode</label>
+                  <select value={edit.mode} onChange={setE('mode')}>
+                    <option value="block">Blocage</option>
+                    <option value="detect">Surveillance</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Seuil de blocage</label>
+                  <input type="number" min="1" value={edit.threshold} onChange={setE('threshold')} />
+                </div>
+                <div className="full" style={{ display: 'flex', gap: 8 }}>
+                  <button className="btn accent" onClick={() => saveEdit(a.id)}>Enregistrer</button>
+                  <button className="btn" onClick={() => setEditId(null)}>Annuler</button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="app-row" key={a.id}>
+              <span>{a.name}</span>
+              <span className="dom">{a.domain}</span>
+              <span className="up">{a.upstream_url}</span>
+              <span>
+                <button
+                  className={`badge ${a.mode} badge-btn`}
+                  onClick={() => toggleMode(a)}
+                  title="Cliquer pour basculer entre Blocage et Surveillance"
+                >
+                  {a.mode === 'block' ? '🛡️ Blocage' : '👁️ Surveillance'}
+                </button>
+              </span>
+              <span className="app-actions">
+                <button className="btn mini" onClick={() => startEdit(a)}>Modifier</button>
+                <button className="btn danger mini" onClick={() => remove(a.id)}>Retirer</button>
+              </span>
+            </div>
+          )
         ))}
       </div>
 

@@ -47,10 +47,10 @@ export const api = {
   llmTest: () => post('/llm/test', {}),
   blocklist: (ip, action) => post('/blocklist', { ip, action }),
   addApp: (app) => post('/apps', app),
-  updateApp: (id, mode, threshold) =>
+  updateApp: (id, fields) =>
     fetch(BASE + '/apps', {
       method: 'PUT', headers: headers({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ id, mode, threshold }),
+      body: JSON.stringify({ id, ...fields }),
     }).then((r) => {
       if (r.status === 401) throw unauthorized()
       if (!r.ok) return r.text().then((t) => Promise.reject(new Error(t)))

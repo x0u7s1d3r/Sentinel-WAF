@@ -356,8 +356,9 @@ func (s *Store) DeleteApp(id int64) error {
 	return err
 }
 
-// UpdateApp modifie le mode et le seuil d'une application.
-func (s *Store) UpdateApp(id int64, mode string, threshold int) error {
+// UpdateApp modifie une application. Les champs nom/domaine/backend ne sont
+// mis à jour que s'ils sont non vides (permet une bascule mode/seuil seule).
+func (s *Store) UpdateApp(id int64, name, domain, upstream, mode string, threshold int) error {
 	if mode != "block" && mode != "detect" {
 		mode = "block"
 	}
@@ -365,8 +366,14 @@ func (s *Store) UpdateApp(id int64, mode string, threshold int) error {
 		threshold = 4
 	}
 	_, err := s.db.Exec(
-		`UPDATE applications SET mode = $2, threshold = $3 WHERE id = $1`,
-		id, mode, threshold)
+		`UPDATE applications SET
+		   name = COALESCE(NULLIF($2,''), name),
+		   domain = COALESCE(NULLIF($3,''), domain),
+		   upstream_url = COALESCE(NULLIF($4,''), upstream_url),
+		   mode = $5,
+		   threshold = $6
+		 WHERE id = $1`,
+		id, name, domain, upstream, mode, threshold)
 	return err
 }
 

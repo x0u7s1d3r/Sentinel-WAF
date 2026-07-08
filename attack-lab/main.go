@@ -15,10 +15,14 @@ package main
 import (
 	"fmt"
 	"html"
+	"io"
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
+	"time"
 )
 
 func main() {
@@ -26,6 +30,8 @@ func main() {
 	if v := os.Getenv("LAB_LISTEN"); v != "" {
 		addr = v
 	}
+
+	initDB() // vraie base SQLite en mémoire, pré-remplie
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", handleHome)
@@ -64,20 +70,20 @@ type vuln struct {
 
 var vulns = []vuln{
 	{"sqli", "Injection SQL", "sqli",
-		"Le paramètre est concaténé dans une requête SQL simulée sans échappement. Un payload d'injection modifie la logique de la requête.",
-		[]string{"1' OR '1'='1", "1 UNION SELECT username,password FROM users", "admin'--"}},
+		"Le paramètre est concaténé dans une VRAIE requête SQLite sans échappement. Une injection extrait de vraies données : comptes, mots de passe, cartes bancaires.",
+		[]string{"1' OR '1'='1", "1' UNION SELECT id,username,password,email FROM users--", "1' UNION SELECT id,username,credit_card,role FROM users--", "1' UNION SELECT id,sender,body,recipient FROM messages WHERE private=1--"}},
 	{"xss", "Cross-Site Scripting (XSS)", "xss",
 		"La saisie est renvoyée telle quelle dans la page. Un script injecté s'exécuterait dans le navigateur de la victime.",
 		[]string{"<script>alert(1)</script>", "<img src=x onerror=alert(document.cookie)>", "<svg onload=alert(1)>"}},
 	{"path", "Traversée de répertoire", "path_traversal",
-		"Le nom de fichier demandé n'est pas filtré. Des séquences ../ permettent de sortir du dossier prévu.",
-		[]string{"../../../../etc/passwd", "..\\..\\..\\windows\\win.ini", "....//....//etc/passwd"}},
+		"Le nom de fichier est lu RÉELLEMENT sur le disque du conteneur, sans filtrage. Base légitime : /app/pages/ (essayez home.txt). Des séquences ../ lisent de vrais fichiers système.",
+		[]string{"home.txt", "config.txt", "../../../../etc/passwd", "../../../../etc/hostname"}},
 	{"cmd", "Injection de commande", "cmd_injection",
-		"La valeur est passée à une commande système simulée. Des métacaractères shell permettent d'enchaîner des commandes.",
-		[]string{"127.0.0.1; cat /etc/passwd", "127.0.0.1 && whoami", "| id"}},
+		"La valeur est passée à un VRAI shell (sh -c). Des métacaractères enchaînent des commandes réellement exécutées dans le conteneur.",
+		[]string{"127.0.0.1", "127.0.0.1; cat /etc/passwd", "127.0.0.1; id", "127.0.0.1 && uname -a"}},
 	{"ssrf", "Server-Side Request Forgery", "ssrf",
-		"Le serveur récupère l'URL fournie. Un attaquant vise des ressources internes (métadonnées cloud, services locaux).",
-		[]string{"http://169.254.169.254/latest/meta-data/", "http://127.0.0.1:8080/", "file:///etc/passwd"}},
+		"Le serveur exécute une VRAIE requête HTTP vers l'URL fournie. Vous pouvez atteindre les services internes du réseau Docker.",
+		[]string{"http://gateway:8080/health", "http://dvwa:80/", "http://127.0.0.1:8080/", "http://postgres:5432/"}},
 	{"nosql", "Injection NoSQL", "nosql",
 		"Les paramètres alimentent une requête de type MongoDB. Des opérateurs ($ne, $gt) contournent l'authentification.",
 		[]string{`{"$ne": null}`, `{"$gt": ""}`, "admin'||'1'=='1"}},
@@ -88,11 +94,11 @@ var vulns = []vuln{
 		"Un formulaire de connexion sans limitation permet d'essayer de nombreux mots de passe rapidement.",
 		[]string{"répéter la soumission rapidement", "admin / admin", "admin / password"}},
 	{"lfi", "Local File Inclusion (LFI)", "bonus",
-		"Un paramètre de page est inclus côté serveur. Il peut pointer vers des fichiers locaux sensibles.",
-		[]string{"/etc/passwd", "php://filter/convert.base64-encode/resource=index", "../../../../etc/hosts"}},
+		"Un paramètre de page est lu RÉELLEMENT côté serveur. Il peut pointer vers de vrais fichiers locaux sensibles.",
+		[]string{"config.txt", "/etc/passwd", "../../../../etc/hostname", "/etc/os-release"}},
 	{"upload", "Upload de fichier", "bonus",
-		"Le nom/type de fichier n'est pas validé. Un fichier exécutable pourrait être déposé.",
-		[]string{"shell.php", "image.jpg.php", "../evil.sh"}},
+		"Le nom et le type ne sont pas validés : le fichier est RÉELLEMENT écrit sur le disque du conteneur (/tmp/uploads).",
+		[]string{"shell.php", "test.txt", "../evil.sh", "backdoor.jsp"}},
 	{"csrf", "Cross-Site Request Forgery", "bonus",
 		"Une action sensible ne vérifie pas l'origine de la requête ni de jeton anti-CSRF.",
 		[]string{"changer l'email sans jeton", "transfert forcé", "modifier le mot de passe"}},
@@ -116,6 +122,12 @@ func vulnBySlug(slug string) *vuln {
 func page(view func(*http.Request) (title, body string)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		title, body := view(r)
+		// Signal spécial : redirection réelle (redirection ouverte).
+		if strings.HasPrefix(body, "__REDIRECT__") {
+			target := strings.TrimPrefix(body, "__REDIRECT__")
+			http.Redirect(w, r, target, http.StatusFound)
+			return
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprint(w, layout(title, r.URL.Path, body))
 	}
@@ -178,20 +190,25 @@ func sqliView(r *http.Request) (string, string) {
 		<input type="text" name="id" placeholder="ex. 1' OR '1'='1" value="` + html.EscapeString(r.URL.Query().Get("id")) + `">
 		<button type="submit">Rechercher</button></form>`
 	if id := r.URL.Query().Get("id"); id != "" {
-		// Vulnérable : la saisie est injectée dans une requête SQL simulée.
-		query := "SELECT * FROM products WHERE id = '" + id + "'"
-		out := "Requête exécutée :\n" + html.EscapeString(query) + "\n\n"
+		// VULNÉRABLE : la saisie est injectée dans une vraie requête SQLite.
+		sqlText, result, hasRows, err := searchProducts(id)
+		if err != nil {
+			// Une erreur SQL révèle souvent une injection (syntaxe cassée).
+			out := "Requête exécutée :\n" + html.EscapeString(sqlText) + "\n\nErreur SQL : " + html.EscapeString(err.Error()) +
+				"\n\n⚠️ L'erreur SQL confirme que l'entrée n'est pas filtrée (injection possible)."
+			return v.Title, b + resultBox("Erreur SQL (injection détectée)", out, true)
+		}
+		out := "Requête exécutée :\n" + html.EscapeString(sqlText) + "\n\nRésultat réel de la base :\n" + html.EscapeString(result)
+		// Heuristique d'affichage : plusieurs lignes ou données hors produits = injection.
 		low := strings.ToLower(id)
-		if strings.Contains(low, "union") && strings.Contains(low, "select") {
-			out += "Résultat (simulé) :\nadmin | 5f4dcc3b5aa765d61d8327deb882cf99\nuser1 | 202cb962ac59075b964b07152d234b70\n\n⚠️ UNION SELECT interprété — extraction de données simulée."
-			return v.Title, b + resultBox("Injection réussie (simulation)", out, true)
+		vulnerable := hasRows && (strings.Contains(low, "union") || strings.Contains(low, " or ") ||
+			strings.Contains(id, "'") || strings.Contains(id, "--"))
+		label := "Requête normale"
+		if vulnerable {
+			label = "Injection SQL réussie — données extraites de la vraie base"
+			out += "\n⚠️ Injection réussie : des données réelles ont été extraites."
 		}
-		if strings.Contains(id, "'") || strings.Contains(low, " or ") || strings.Contains(id, "--") {
-			out += "Résultat (simulé) :\nTOUS les produits retournés (condition toujours vraie).\n\n⚠️ La logique de la requête a été altérée par l'injection."
-			return v.Title, b + resultBox("Injection réussie (simulation)", out, true)
-		}
-		out += "Résultat : 1 produit trouvé (comportement normal)."
-		return v.Title, b + resultBox("Requête normale", out, false)
+		return v.Title, b + resultBox(label, out, vulnerable)
 	}
 	return v.Title, b
 }
@@ -222,11 +239,22 @@ func pathView(r *http.Request) (string, string) {
 		<input type="text" name="file" placeholder="ex. ../../../../etc/passwd" value="` + html.EscapeString(file) + `">
 		<button type="submit">Afficher</button></form>`
 	if file != "" {
-		if strings.Contains(file, "..") || strings.HasPrefix(file, "/etc") {
-			content := "root:x:0:0:root:/root:/bin/bash\ndaemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin\n(...) [contenu simulé de " + html.EscapeString(file) + "]"
-			return v.Title, b + resultBox("Fichier hors périmètre lu (simulation)", content+"\n\n⚠️ Traversée de répertoire réussie.", true)
+		// VULNÉRABLE : le chemin est concaténé sans nettoyage, puis lu réellement.
+		// Une séquence ../ sort du dossier /app/pages et lit un vrai fichier système.
+		data, err := os.ReadFile("/app/pages/" + file)
+		if err != nil {
+			// Repli : chemin absolu direct (LFI classique type /etc/passwd).
+			data, err = os.ReadFile(file)
 		}
-		return v.Title, b + resultBox("Lecture normale", "Contenu du fichier autorisé : "+html.EscapeString(file), false)
+		if err != nil {
+			return v.Title, b + resultBox("Fichier introuvable", "Impossible de lire « "+html.EscapeString(file)+" » :\n"+html.EscapeString(err.Error()), false)
+		}
+		vulnerable := strings.Contains(file, "..") || strings.HasPrefix(file, "/")
+		label := "Contenu du fichier (lecture réelle)"
+		if vulnerable {
+			label = "Traversée de répertoire réussie — fichier réel hors périmètre"
+		}
+		return v.Title, b + resultBox(label, html.EscapeString(string(data)), vulnerable)
 	}
 	return v.Title, b
 }
@@ -240,14 +268,19 @@ func cmdView(r *http.Request) (string, string) {
 		<input type="text" name="host" placeholder="ex. 127.0.0.1; cat /etc/passwd" value="` + html.EscapeString(host) + `">
 		<button type="submit">Ping</button></form>`
 	if host != "" {
-		cmd := "ping -c 1 " + host
-		out := "Commande exécutée :\n" + html.EscapeString(cmd) + "\n\n"
-		if strings.ContainsAny(host, ";|&") || strings.Contains(host, "$(") {
-			out += "PING 127.0.0.1 : 1 paquet\n\nroot:x:0:0:root:/root:/bin/bash\n(...) \n\n⚠️ Commande enchaînée exécutée — injection réussie (simulation)."
-			return v.Title, b + resultBox("Injection de commande réussie (simulation)", out, true)
+		// VULNÉRABLE : l'entrée est passée telle quelle à sh -c. Des métacaractères
+		// (; | && $()) enchaînent des commandes réellement exécutées.
+		out, err := exec.Command("sh", "-c", "ping -c 1 "+host).CombinedOutput()
+		body := "Commande exécutée :\nsh -c \"ping -c 1 " + html.EscapeString(host) + "\"\n\n" + html.EscapeString(string(out))
+		if err != nil && len(out) == 0 {
+			body += "\n[erreur] " + html.EscapeString(err.Error())
 		}
-		out += "PING " + html.EscapeString(host) + " : 1 paquet transmis (comportement normal)."
-		return v.Title, b + resultBox("Commande normale", out, false)
+		vulnerable := strings.ContainsAny(host, ";|&") || strings.Contains(host, "$(") || strings.Contains(host, "`")
+		label := "Ping (commande normale)"
+		if vulnerable {
+			label = "Injection de commande réussie — commande réellement exécutée"
+		}
+		return v.Title, b + resultBox(label, body, vulnerable)
 	}
 	return v.Title, b
 }
@@ -258,15 +291,28 @@ func ssrfView(r *http.Request) (string, string) {
 	u := r.URL.Query().Get("url")
 	b += `<form method="GET" action="/ssrf" class="vform">
 		<label>URL à récupérer côté serveur</label>
-		<input type="text" name="url" placeholder="ex. http://169.254.169.254/latest/meta-data/" value="` + html.EscapeString(u) + `">
+		<input type="text" name="url" placeholder="ex. http://gateway:8080/ ou http://dvwa:80/" value="` + html.EscapeString(u) + `">
 		<button type="submit">Récupérer</button></form>`
 	if u != "" {
-		low := strings.ToLower(u)
-		if strings.Contains(low, "169.254.169.254") || strings.Contains(low, "127.0.0.1") || strings.Contains(low, "localhost") || strings.HasPrefix(low, "file:") {
-			out := "Le serveur a tenté de récupérer : " + html.EscapeString(u) + "\n\n[réponse simulée]\niam-role: admin\naccess-key: AKIA...\n\n⚠️ Ressource interne atteinte — SSRF réussie (simulation)."
-			return v.Title, b + resultBox("SSRF réussie (simulation)", out, true)
+		// VULNÉRABLE : le serveur récupère l'URL fournie sans aucune validation
+		// (schéma, hôte interne…). Il peut atteindre des services internes.
+		client := &http.Client{Timeout: 5 * time.Second}
+		resp, err := client.Get(u)
+		if err != nil {
+			return v.Title, b + resultBox("Requête échouée", "Le serveur a tenté de récupérer « "+html.EscapeString(u)+" » :\n"+html.EscapeString(err.Error()), false)
 		}
-		return v.Title, b + resultBox("Récupération externe normale", "Contenu récupéré depuis "+html.EscapeString(u)+" (comportement normal).", false)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		resp.Body.Close()
+		out := fmt.Sprintf("HTTP %d %s\n\n%s", resp.StatusCode, resp.Status, string(body))
+		low := strings.ToLower(u)
+		vulnerable := strings.Contains(low, "127.0.0.1") || strings.Contains(low, "localhost") ||
+			strings.Contains(low, "169.254") || strings.Contains(low, "gateway") ||
+			strings.Contains(low, "dvwa") || strings.Contains(low, "postgres") || strings.HasPrefix(low, "file:")
+		label := "Contenu récupéré (requête réelle)"
+		if vulnerable {
+			label = "SSRF réussie — service interne atteint depuis le serveur"
+		}
+		return v.Title, b + resultBox(label, "Le serveur a récupéré « "+html.EscapeString(u)+" » :\n\n"+html.EscapeString(out), vulnerable)
 	}
 	return v.Title, b
 }
@@ -312,15 +358,23 @@ func bruteView(r *http.Request) (string, string) {
 	b += `<form method="GET" action="/bruteforce" class="vform">
 		<label>Utilisateur</label>
 		<input type="text" name="u" placeholder="admin" value="` + html.EscapeString(u) + `">
-		<label>Mot de passe</label>
-		<input type="text" name="p" placeholder="password" value="` + html.EscapeString(p) + `">
+		<label>Mot de passe (haché MD5 ou injection)</label>
+		<input type="text" name="p" placeholder="5f4dcc3b5aa765d61d8327deb882cf99" value="` + html.EscapeString(p) + `">
 		<button type="submit">Se connecter</button></form>
-		<p class="hint2">Astuce : soumettez ce formulaire rapidement plusieurs fois de suite (8+ tentatives en 10 s) pour déclencher la détection de force brute du WAF.</p>`
+		<p class="hint2">Astuce 1 : soumettez rapidement 8+ fois pour déclencher la détection de force brute du WAF. Astuce 2 : essayez une injection SQL dans le login, ex. <code>' OR '1'='1</code> comme mot de passe.</p>`
 	if u != "" || p != "" {
-		if p == "letmein" {
-			return v.Title, b + resultBox("Connexion réussie", "Bienvenue "+html.EscapeString(u)+" !", false)
+		// VULNÉRABLE : login par concaténation directe (injectable).
+		sqlText, result, ok, err := loginVulnerable(u, p)
+		if err != nil {
+			out := "Requête exécutée :\n" + html.EscapeString(sqlText) + "\n\nErreur SQL : " + html.EscapeString(err.Error())
+			return v.Title, b + resultBox("Erreur SQL (injection détectée)", out, true)
 		}
-		return v.Title, b + resultBox("Échec de connexion", "Identifiants invalides. Réessayez.", true)
+		if ok {
+			out := "Requête exécutée :\n" + html.EscapeString(sqlText) + "\n\nAuthentifié ! Comptes correspondants :\n" + html.EscapeString(result)
+			return v.Title, b + resultBox("Connexion réussie", out, strings.Contains(p, "'") || strings.Contains(p, " OR "))
+		}
+		out := "Requête exécutée :\n" + html.EscapeString(sqlText) + "\n\nIdentifiants invalides."
+		return v.Title, b + resultBox("Échec de connexion", out, false)
 	}
 	return v.Title, b
 }
@@ -334,11 +388,20 @@ func lfiView(r *http.Request) (string, string) {
 		<input type="text" name="page" placeholder="ex. /etc/passwd" value="` + html.EscapeString(pageParam) + `">
 		<button type="submit">Inclure</button></form>`
 	if pageParam != "" {
-		if strings.Contains(pageParam, "/etc") || strings.Contains(pageParam, "..") || strings.HasPrefix(pageParam, "php://") {
-			out := "include(\"" + html.EscapeString(pageParam) + "\")\n\nroot:x:0:0:root:/root:/bin/bash\n(...) [contenu local simulé]\n\n⚠️ Fichier local inclus — LFI réussie (simulation)."
-			return v.Title, b + resultBox("Inclusion de fichier local réussie (simulation)", out, true)
+		// VULNÉRABLE : inclusion/lecture réelle du fichier demandé, sans filtrage.
+		data, err := os.ReadFile("/app/pages/" + pageParam)
+		if err != nil {
+			data, err = os.ReadFile(pageParam)
 		}
-		return v.Title, b + resultBox("Inclusion normale", "Page incluse : "+html.EscapeString(pageParam), false)
+		if err != nil {
+			return v.Title, b + resultBox("Inclusion échouée", "include(\""+html.EscapeString(pageParam)+"\") :\n"+html.EscapeString(err.Error()), false)
+		}
+		vulnerable := strings.Contains(pageParam, "..") || strings.HasPrefix(pageParam, "/")
+		label := "Page incluse (lecture réelle)"
+		if vulnerable {
+			label = "Inclusion de fichier local réussie — fichier réel"
+		}
+		return v.Title, b + resultBox(label, "include(\""+html.EscapeString(pageParam)+"\") →\n\n"+html.EscapeString(string(data)), vulnerable)
 	}
 	return v.Title, b
 }
@@ -347,20 +410,49 @@ func uploadView(r *http.Request) (string, string) {
 	v := vulnBySlug("upload")
 	b := sectionHeader(v)
 	name := r.URL.Query().Get("filename")
+	content := r.URL.Query().Get("content")
 	b += `<form method="GET" action="/upload" class="vform">
 		<label>Nom du fichier à téléverser</label>
 		<input type="text" name="filename" placeholder="ex. shell.php" value="` + html.EscapeString(name) + `">
+		<label>Contenu (facultatif)</label>
+		<input type="text" name="content" placeholder="<?php system($_GET[c]); ?>" value="` + html.EscapeString(content) + `">
 		<button type="submit">Téléverser</button></form>`
 	if name != "" {
+		if content == "" {
+			content = "// fichier de test déposé par l'Attack Lab\n"
+		}
+		// VULNÉRABLE : nom non nettoyé (peut contenir ../), aucune vérif d'extension.
+		// Le fichier est réellement écrit sur le disque du conteneur.
+		dir := "/tmp/uploads"
+		_ = os.MkdirAll(dir, 0o755)
+		full := filepath.Join(dir, name)
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			return v.Title, b + resultBox("Upload échoué", html.EscapeString(err.Error()), false)
+		}
+		entries, _ := os.ReadDir(dir)
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "Fichier écrit sur le disque : %s\n\nContenu de %s :\n", full, dir)
+		for _, e := range entries {
+			info, _ := e.Info()
+			var size int64
+			if info != nil {
+				size = info.Size()
+			}
+			fmt.Fprintf(&sb, "  %-30s %d octets\n", e.Name(), size)
+		}
 		low := strings.ToLower(name)
-		dangerous := []string{".php", ".sh", ".jsp", ".asp", ".exe", ".py"}
-		for _, ext := range dangerous {
+		dangerous := strings.Contains(name, "..")
+		for _, ext := range []string{".php", ".sh", ".jsp", ".asp", ".exe", ".py"} {
 			if strings.Contains(low, ext) {
-				out := "Fichier accepté : " + html.EscapeString(name) + "\nChemin : /uploads/" + html.EscapeString(name) + "\n\n⚠️ Extension exécutable acceptée — upload dangereux (simulation)."
-				return v.Title, b + resultBox("Upload dangereux accepté (simulation)", out, true)
+				dangerous = true
+				break
 			}
 		}
-		return v.Title, b + resultBox("Upload normal", "Fichier "+html.EscapeString(name)+" accepté (type sûr).", false)
+		label := "Fichier téléversé (écriture réelle)"
+		if dangerous {
+			label = "Upload dangereux accepté — fichier réellement écrit"
+		}
+		return v.Title, b + resultBox(label, html.EscapeString(sb.String()), dangerous)
 	}
 	return v.Title, b
 }
@@ -369,14 +461,23 @@ func csrfView(r *http.Request) (string, string) {
 	v := vulnBySlug("csrf")
 	b := sectionHeader(v)
 	email := r.URL.Query().Get("email")
-	b += `<p>Ce formulaire change l'email du compte <strong>sans jeton anti-CSRF ni vérification d'origine</strong>. Une page tierce pourrait le soumettre à votre insu.</p>
+	b += `<p>Ce formulaire change l'email du compte <strong>admin</strong> en base, <strong>sans jeton anti-CSRF ni vérification d'origine</strong>. Une page tierce pourrait le soumettre à votre insu.</p>
 		<form method="GET" action="/csrf" class="vform">
-		<label>Nouvel email du compte</label>
+		<label>Nouvel email du compte admin</label>
 		<input type="text" name="email" placeholder="attaquant@evil.com" value="` + html.EscapeString(email) + `">
 		<button type="submit">Changer l'email</button></form>`
 	if email != "" {
-		out := "Email du compte modifié en : " + html.EscapeString(email) + "\n\n⚠️ Action sensible exécutée sans jeton CSRF — vulnérable."
-		return v.Title, b + resultBox("Action CSRF exécutée (simulation)", out, true)
+		// RÉEL : modification effective en base, sans aucune protection CSRF.
+		_, err := db.Exec("UPDATE users SET email = ? WHERE username = 'admin'")
+		_ = err
+		// On relit pour prouver le changement (requête vulnérable directe).
+		_, res, _, _ := vulnerableQuery("SELECT username, email, role FROM users WHERE username='admin'")
+		// Applique réellement la nouvelle valeur.
+		db.Exec("UPDATE users SET email = '" + email + "' WHERE username = 'admin'")
+		_, res2, _, _ := vulnerableQuery("SELECT username, email, role FROM users WHERE username='admin'")
+		out := "Avant :\n" + res + "\nAprès (email réellement modifié) :\n" + res2 +
+			"\n⚠️ Action sensible exécutée sans jeton CSRF."
+		return v.Title, b + resultBox("Action CSRF exécutée — email réellement modifié en base", html.EscapeString(out), true)
 	}
 	return v.Title, b
 }
@@ -387,17 +488,21 @@ func redirectView(r *http.Request) (string, string) {
 	to := r.URL.Query().Get("to")
 	b += `<form method="GET" action="/redirect" class="vform">
 		<label>Rediriger vers</label>
-		<input type="text" name="to" placeholder="ex. //evil.example.com" value="` + html.EscapeString(to) + `">
-		<button type="submit">Aller</button></form>`
+		<input type="text" name="to" placeholder="ex. https://evil.example.com" value="` + html.EscapeString(to) + `">
+		<button type="submit">Aller</button></form>
+		<p class="hint2">Note : avec le paramètre <code>&go=1</code>, la redirection est réellement effectuée (302). Sans lui, la cible est seulement affichée pour éviter de quitter le lab par erreur.</p>`
 	if to != "" {
-		// Vulnérable : on n'effectue PAS la redirection réelle (sécurité du lab),
-		// on montre juste que la cible n'est pas validée.
-		safe := strings.HasPrefix(to, "/") && !strings.HasPrefix(to, "//") && !strings.HasPrefix(to, "/\\")
-		if !safe {
-			out := "Location: " + html.EscapeString(to) + "\n\n⚠️ Redirection vers un domaine externe non validé — redirection ouverte (simulation, non suivie)."
-			return v.Title, b + resultBox("Redirection ouverte détectée (simulation)", out, true)
+		unsafe := !strings.HasPrefix(to, "/") || strings.HasPrefix(to, "//") || strings.HasPrefix(to, "/\\")
+		if r.URL.Query().Get("go") == "1" && unsafe {
+			// RÉEL : redirection ouverte effective vers une cible non validée.
+			// (Le navigateur suivra ce Location.)
+			return "", "__REDIRECT__" + to
 		}
-		return v.Title, b + resultBox("Redirection interne normale", "Redirection vers "+html.EscapeString(to), false)
+		if unsafe {
+			out := "Location: " + html.EscapeString(to) + "\n\n⚠️ Cible externe non validée. Ajoutez &go=1 à l'URL pour effectuer réellement la redirection (redirection ouverte)."
+			return v.Title, b + resultBox("Redirection ouverte détectée", out, true)
+		}
+		return v.Title, b + resultBox("Redirection interne normale", "Location: "+html.EscapeString(to), false)
 	}
 	return v.Title, b
 }

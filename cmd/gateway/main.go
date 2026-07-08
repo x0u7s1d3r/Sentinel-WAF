@@ -457,15 +457,18 @@ func main() {
 
 		case http.MethodPut:
 			var body struct {
-				ID        int64  `json:"id"`
-				Mode      string `json:"mode"`
-				Threshold int    `json:"threshold"`
+				ID          int64  `json:"id"`
+				Name        string `json:"name"`
+				Domain      string `json:"domain"`
+				UpstreamURL string `json:"upstream_url"`
+				Mode        string `json:"mode"`
+				Threshold   int    `json:"threshold"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ID == 0 {
-				http.Error(w, "id, mode et threshold requis", http.StatusBadRequest)
+				http.Error(w, "id requis", http.StatusBadRequest)
 				return
 			}
-			if err := store.UpdateApp(body.ID, body.Mode, body.Threshold); err != nil {
+			if err := store.UpdateApp(body.ID, body.Name, body.Domain, body.UpstreamURL, body.Mode, body.Threshold); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
