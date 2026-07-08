@@ -65,6 +65,39 @@ export default function Overview() {
 
   return (
     <div className="soc">
+      <div className="cmd-hero">
+        <div className="shield-wrap">
+          <div className="ring" />
+          <svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <linearGradient id="hs" x1="0" y1="0" x2="40" y2="40">
+                <stop offset="0" stopColor="#3FE0A8" /><stop offset="1" stopColor="#2C5CE0" />
+              </linearGradient>
+            </defs>
+            <path d="M20 3 L34 8.5 V20 C34 29 27.5 35 20 37.5 C12.5 35 6 29 6 20 V8.5 Z" fill="url(#hs)" />
+            <path d="M13.5 20 l4.5 4.5 l9 -10" stroke="#0C1524" strokeWidth="2.8" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </div>
+        <div className="hero-txt">
+          <div className="lbl">État de la protection</div>
+          <div className="st">
+            <span className={blocked > 0 ? 'attacked' : 'ok'}>
+              {blocked > 0 ? 'Attaques repoussées' : 'Système protégé'}
+            </span>
+            <span className="badge-live"><i />EN DIRECT</span>
+          </div>
+          <div className="sub">
+            Sentinel inspecte le trafic en temps réel. <b>{blocked} attaque{blocked > 1 ? 's' : ''}</b> bloquée{blocked > 1 ? 's' : ''} sur la dernière heure,
+            {detected > 0 ? ` ${detected} sous surveillance.` : ' aucune menace n\u2019a atteint vos applications.'}
+          </div>
+        </div>
+        <div className="mini">
+          <div className="mi"><span className="mv coral">{blocked}</span><span className="mk">Bloquées</span></div>
+          <div className="mi"><span className="mv amber">{detected}</span><span className="mk">Surveillance</span></div>
+          <div className="mi"><span className="mv">{sites.length}</span><span className="mk">Applications</span></div>
+        </div>
+      </div>
+
       <div className="tiles">
         <Tile cls="" k="Requêtes analysées" v={total} />
         <Tile cls="blocked" k="Attaques bloquées" v={blocked} />
@@ -84,27 +117,27 @@ export default function Overview() {
               <AreaChart data={series} margin={{ top: 6, right: 8, left: -18, bottom: 0 }}>
                 <defs>
                   <linearGradient id="oAllowed" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#17A34A" stopOpacity={0.32} />
-                    <stop offset="100%" stopColor="#17A34A" stopOpacity={0} />
+                    <stop offset="0%" stopColor="#0FA678" stopOpacity={0.32} />
+                    <stop offset="100%" stopColor="#0FA678" stopOpacity={0} />
                   </linearGradient>
                   <linearGradient id="oBlocked" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#E23D43" stopOpacity={0.5} />
-                    <stop offset="100%" stopColor="#E23D43" stopOpacity={0} />
+                    <stop offset="0%" stopColor="#E5484D" stopOpacity={0.5} />
+                    <stop offset="100%" stopColor="#E5484D" stopOpacity={0} />
                   </linearGradient>
                   <linearGradient id="oDetected" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#D9820A" stopOpacity={0.4} />
-                    <stop offset="100%" stopColor="#D9820A" stopOpacity={0} />
+                    <stop offset="0%" stopColor="#E0920A" stopOpacity={0.4} />
+                    <stop offset="100%" stopColor="#E0920A" stopOpacity={0} />
                   </linearGradient>
                 </defs>
                 <XAxis dataKey="t" tickFormatter={hhmm} tick={{ fill: '#93A1B4', fontSize: 11 }}
-                  axisLine={{ stroke: '#E4EBF4' }} tickLine={false} minTickGap={40} />
+                  axisLine={{ stroke: '#E6ECF5' }} tickLine={false} minTickGap={40} />
                 <YAxis allowDecimals={false} tick={{ fill: '#93A1B4', fontSize: 11 }}
                   axisLine={false} tickLine={false} width={38} />
                 <Tooltip labelFormatter={hhmm}
-                  contentStyle={{ background: '#FFFFFF', border: '1px solid #CFDCEC', borderRadius: 8, fontSize: 12 }} />
-                <Area type="monotone" dataKey="allowed" stackId="1" stroke="#17A34A" fill="url(#oAllowed)" strokeWidth={1.5} name="Autorisées" />
-                <Area type="monotone" dataKey="detected" stackId="1" stroke="#D9820A" fill="url(#oDetected)" strokeWidth={1.5} name="Surveillance" />
-                <Area type="monotone" dataKey="blocked" stackId="1" stroke="#E23D43" fill="url(#oBlocked)" strokeWidth={1.5} name="Bloquées" />
+                  contentStyle={{ background: '#FFFFFF', border: '1px solid #D6E0EE', borderRadius: 8, fontSize: 12 }} />
+                <Area type="monotone" dataKey="allowed" stackId="1" stroke="#0FA678" fill="url(#oAllowed)" strokeWidth={1.5} name="Autorisées" />
+                <Area type="monotone" dataKey="detected" stackId="1" stroke="#E0920A" fill="url(#oDetected)" strokeWidth={1.5} name="Surveillance" />
+                <Area type="monotone" dataKey="blocked" stackId="1" stroke="#E5484D" fill="url(#oBlocked)" strokeWidth={1.5} name="Bloquées" />
               </AreaChart>
             </ResponsiveContainer>
           )}

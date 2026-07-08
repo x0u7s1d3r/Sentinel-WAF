@@ -65,8 +65,8 @@ export default function App() {
           <svg className="logo" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
             <defs>
               <linearGradient id="lg" x1="0" y1="0" x2="40" y2="40">
-                <stop offset="0" stopColor="#3B82F6" />
-                <stop offset="1" stopColor="#2456C8" />
+                <stop offset="0" stopColor="#2C5CE0" />
+                <stop offset="1" stopColor="#0FA678" />
               </linearGradient>
             </defs>
             <path d="M20 3 L34 8.5 V20 C34 29 27.5 35 20 37.5 C12.5 35 6 29 6 20 V8.5 Z" fill="url(#lg)" />

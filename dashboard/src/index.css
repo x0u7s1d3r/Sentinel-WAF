@@ -1,26 +1,29 @@
 :root {
-  /* ---- Palette claire, bleu rassurant (façon SaaS moderne) ---- */
-  --bg:        #EEF3FA;
+  /* ---- Enterprise raffiné : navy profond, émeraude, corail ---- */
+  --bg:        #F6F8FC;
   --panel:     #FFFFFF;
-  --panel-2:   #F4F8FD;
-  --border:    #E4EBF4;
-  --border-hi: #CFDCEC;
-  --text:      #17293E;
-  --muted:     #5C6B80;
+  --panel-2:   #F1F5FB;
+  --border:    #E6ECF5;
+  --border-hi: #D6E0EE;
+  --text:      #0C1524;
+  --muted:     #5A6B82;
   --faint:     #93A1B4;
 
-  --safe:      #17A34A;  /* protégé / autorisé */
-  --warn:      #D9820A;  /* surveillance / détecté */
-  --threat:    #E23D43;  /* bloqué / menace */
-  --accent:    #2F6FED;  /* marque (bleu) */
-  --accent-dim:#2F6FED14;
-  --blue:      #2F6FED;
+  --safe:      #0FA678;  /* protégé / autorisé (émeraude) */
+  --warn:      #E0920A;  /* surveillance / détecté (ambre) */
+  --threat:    #E5484D;  /* bloqué / menace (corail) */
+  --accent:    #2C5CE0;  /* marque (bleu profond) */
+  --accent-dim:#2C5CE014;
+  --blue:      #4B7BF5;
   --violet:    #7C6BFF;
 
-  --shadow: 0 1px 2px rgba(23, 41, 62, .04), 0 4px 16px rgba(23, 41, 62, .05);
-  --shadow-hi: 0 4px 20px rgba(47, 111, 237, .10);
+  --navy-1:    #0E1B33;  /* hero sombre signature */
+  --navy-2:    #16294A;
 
-  --radius: 14px;
+  --shadow: 0 1px 2px rgba(12, 21, 36, .04), 0 6px 20px rgba(12, 21, 36, .06);
+  --shadow-hi: 0 8px 30px rgba(44, 92, 224, .14);
+
+  --radius: 16px;
   --display: 'Space Grotesk', system-ui, sans-serif;
   --body: 'Inter', system-ui, sans-serif;
   --mono: 'JetBrains Mono', ui-monospace, monospace;
@@ -93,9 +96,9 @@ a { color: inherit; text-decoration: none; }
   box-shadow: 0 0 0 0 var(--safe); animation: guard 3s infinite;
 }
 @keyframes guard {
-  0% { box-shadow: 0 0 0 0 #2F6FED44; }
-  70% { box-shadow: 0 0 0 22px #2F6FED00; }
-  100% { box-shadow: 0 0 0 0 #2F6FED00; }
+  0% { box-shadow: 0 0 0 0 #2C5CE044; }
+  70% { box-shadow: 0 0 0 22px #2C5CE000; }
+  100% { box-shadow: 0 0 0 0 #2C5CE000; }
 }
 .hero .status-label { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .1em; }
 .hero .status { font-family: var(--display); font-size: 44px; font-weight: 700; line-height: 1.05; margin: 4px 0 8px; }
@@ -504,4 +507,65 @@ a { color: inherit; text-decoration: none; }
 @media (max-width: 640px) {
   .app-card { flex-direction: column; align-items: stretch; gap: 12px; }
   .app-card-side { justify-content: space-between; }
+}
+
+/* =========================================================================
+   Refonte « Enterprise raffiné » — hero signature + tuiles + responsive
+   ========================================================================= */
+
+/* Hero sombre signature (Vue d'ensemble) */
+.cmd-hero {
+  position: relative; overflow: hidden; border-radius: 22px; margin-bottom: 20px;
+  background:
+    radial-gradient(520px 300px at 12% 10%, rgba(15,166,120,.22) 0%, transparent 60%),
+    radial-gradient(560px 320px at 88% 120%, rgba(75,123,245,.30) 0%, transparent 60%),
+    linear-gradient(140deg, var(--navy-2), var(--navy-1));
+  color: #fff; padding: 30px 34px; display: grid;
+  grid-template-columns: auto 1fr auto; gap: 28px; align-items: center;
+  box-shadow: 0 12px 40px rgba(14,27,51,.28);
+  animation: rise .5s cubic-bezier(.2,.7,.2,1) both;
+}
+.cmd-hero .shield-wrap { position: relative; width: 104px; height: 104px; display: grid; place-items: center; }
+.cmd-hero .ring { position: absolute; inset: 8px; border-radius: 50%; box-shadow: 0 0 0 0 rgba(15,166,120,.5); animation: hpulse 3s infinite; }
+@keyframes hpulse { 0% { box-shadow: 0 0 0 0 rgba(15,166,120,.45); } 70% { box-shadow: 0 0 0 26px rgba(15,166,120,0); } 100% { box-shadow: 0 0 0 0 rgba(15,166,120,0); } }
+.cmd-hero .shield-wrap svg { width: 96px; height: 96px; position: relative; filter: drop-shadow(0 6px 14px rgba(15,166,120,.4)); }
+.cmd-hero .lbl { font-size: 11.5px; text-transform: uppercase; letter-spacing: .18em; color: rgba(255,255,255,.55); font-weight: 600; }
+.cmd-hero .st { font-family: var(--display); font-size: 42px; font-weight: 700; line-height: 1.02; margin: 8px 0 10px; letter-spacing: -.03em; display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.cmd-hero .st .ok { color: #3FE0A8; }
+.cmd-hero .st .attacked { color: #FF7A7F; }
+.cmd-hero .badge-live { font-family: var(--body); font-size: 12px; font-weight: 600; letter-spacing: 0; color: #3FE0A8; background: rgba(63,224,168,.12); border: 1px solid rgba(63,224,168,.3); padding: 4px 10px; border-radius: 999px; display: inline-flex; align-items: center; gap: 6px; transform: translateY(-6px); }
+.cmd-hero .badge-live i { width: 6px; height: 6px; border-radius: 50%; background: #3FE0A8; animation: beat 1.4s infinite; }
+.cmd-hero .sub { color: rgba(255,255,255,.74); font-size: 14.5px; max-width: 48ch; line-height: 1.55; }
+.cmd-hero .sub b { color: #fff; font-weight: 600; }
+.cmd-hero .mini { display: flex; gap: 26px; padding-left: 28px; border-left: 1px solid rgba(255,255,255,.14); }
+.cmd-hero .mi { display: flex; flex-direction: column; gap: 3px; }
+.cmd-hero .mv { font-family: var(--display); font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.cmd-hero .mv.coral { color: #FF7A7F; } .cmd-hero .mv.amber { color: #FFC15E; }
+.cmd-hero .mk { font-size: 11.5px; color: rgba(255,255,255,.55); text-transform: uppercase; letter-spacing: .06em; }
+
+/* Tuiles KPI raffinées (chiffres tabulaires + tendance) */
+.tile .v { font-variant-numeric: tabular-nums; letter-spacing: -.025em; }
+.tile .trend { font-weight: 600; font-size: 11px; display: inline-flex; align-items: center; gap: 2px; padding: 2px 6px; border-radius: 6px; margin-right: 6px; }
+.tile .trend.up { color: var(--safe); background: #0FA67814; }
+.tile .trend.down { color: var(--threat); background: #E5484D14; }
+.tile .trend.flat { color: var(--muted); background: var(--panel-2); }
+
+/* Entrée douce générale */
+@keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+.tiles, .sites-grid, .soc-hero, .kpis { animation: rise .5s cubic-bezier(.2,.7,.2,1) both; }
+.tiles { animation-delay: .05s; } .soc-hero { animation-delay: .1s; } .sites-grid { animation-delay: .14s; }
+
+/* Responsive : dynamique sur tous les écrans */
+@media (max-width: 1040px) {
+  .cmd-hero { grid-template-columns: auto 1fr; }
+  .cmd-hero .mini { grid-column: 1 / -1; padding-left: 0; border-left: 0; border-top: 1px solid rgba(255,255,255,.14); padding-top: 18px; }
+}
+@media (max-width: 720px) {
+  .shell { padding: 16px 14px 48px; }
+  .topbar { flex-wrap: wrap; gap: 12px; }
+  .nav { order: 3; width: 100%; overflow-x: auto; }
+  .cmd-hero { grid-template-columns: 1fr; text-align: center; justify-items: center; padding: 24px 20px; }
+  .cmd-hero .mini { justify-content: center; }
+  .cmd-hero .st { justify-content: center; font-size: 34px; }
+  .tiles { grid-template-columns: repeat(2, 1fr); }
 }

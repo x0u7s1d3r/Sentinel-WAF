@@ -18,8 +18,8 @@ const RANGES = [
 const RANGE_LABEL = Object.fromEntries(RANGES.map(([k, l]) => [k, l]))
 
 const CAT_COLOR = {
-  sqli: '#E23D43', xss: '#D9820A', path_traversal: '#9B8CFF',
-  cmd_injection: '#F97316', ssrf: '#2F6FED', nosql: '#0EA5A3', scanner: '#17A34A',
+  sqli: '#E5484D', xss: '#E0920A', path_traversal: '#9B8CFF',
+  cmd_injection: '#F97316', ssrf: '#2C5CE0', nosql: '#0EA5A3', scanner: '#0FA678',
   sensitive_path: '#EC4899', brute_force: '#8B5CF6', blocklist: '#64748B',
 }
 const CAT_LABEL = {
@@ -172,29 +172,29 @@ export default function SocConsole() {
               <AreaChart data={series} margin={{ top: 6, right: 8, left: -18, bottom: 0 }}>
                 <defs>
                   <linearGradient id="gAllowed" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#17A34A" stopOpacity={0.35} />
-                    <stop offset="100%" stopColor="#17A34A" stopOpacity={0} />
+                    <stop offset="0%" stopColor="#0FA678" stopOpacity={0.35} />
+                    <stop offset="100%" stopColor="#0FA678" stopOpacity={0} />
                   </linearGradient>
                   <linearGradient id="gBlocked" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#E23D43" stopOpacity={0.5} />
-                    <stop offset="100%" stopColor="#E23D43" stopOpacity={0} />
+                    <stop offset="0%" stopColor="#E5484D" stopOpacity={0.5} />
+                    <stop offset="100%" stopColor="#E5484D" stopOpacity={0} />
                   </linearGradient>
                   <linearGradient id="gDetected" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#D9820A" stopOpacity={0.4} />
-                    <stop offset="100%" stopColor="#D9820A" stopOpacity={0} />
+                    <stop offset="0%" stopColor="#E0920A" stopOpacity={0.4} />
+                    <stop offset="100%" stopColor="#E0920A" stopOpacity={0} />
                   </linearGradient>
                 </defs>
                 <XAxis dataKey="t" tickFormatter={tickFmt(range)} tick={{ fill: '#7A8AA0', fontSize: 11 }}
-                  axisLine={{ stroke: '#E4EBF4' }} tickLine={false} minTickGap={40} />
+                  axisLine={{ stroke: '#E6ECF5' }} tickLine={false} minTickGap={40} />
                 <YAxis allowDecimals={false} tick={{ fill: '#7A8AA0', fontSize: 11 }}
                   axisLine={false} tickLine={false} width={38} />
                 <Tooltip
                   labelFormatter={labelFmt(range)}
-                  contentStyle={{ background: '#FFFFFF', border: '1px solid #CFDCEC', borderRadius: 8, fontSize: 12 }}
+                  contentStyle={{ background: '#FFFFFF', border: '1px solid #D6E0EE', borderRadius: 8, fontSize: 12 }}
                   labelStyle={{ color: '#5C6B80' }} />
-                <Area type="monotone" dataKey="allowed" stackId="1" stroke="#17A34A" fill="url(#gAllowed)" strokeWidth={1.5} name="Autorisées" />
-                <Area type="monotone" dataKey="detected" stackId="1" stroke="#D9820A" fill="url(#gDetected)" strokeWidth={1.5} name="Surveillance" />
-                <Area type="monotone" dataKey="blocked" stackId="1" stroke="#E23D43" fill="url(#gBlocked)" strokeWidth={1.5} name="Bloquées" />
+                <Area type="monotone" dataKey="allowed" stackId="1" stroke="#0FA678" fill="url(#gAllowed)" strokeWidth={1.5} name="Autorisées" />
+                <Area type="monotone" dataKey="detected" stackId="1" stroke="#E0920A" fill="url(#gDetected)" strokeWidth={1.5} name="Surveillance" />
+                <Area type="monotone" dataKey="blocked" stackId="1" stroke="#E5484D" fill="url(#gBlocked)" strokeWidth={1.5} name="Bloquées" />
               </AreaChart>
             </ResponsiveContainer>
           )}
@@ -226,7 +226,7 @@ export default function SocConsole() {
                         <Cell key={c.category} fill={CAT_COLOR[c.category] || '#5C6B80'} />
                       ))}
                     </Pie>
-                    <Tooltip contentStyle={{ background: '#FFFFFF', border: '1px solid #CFDCEC', borderRadius: 8, fontSize: 12 }} />
+                    <Tooltip contentStyle={{ background: '#FFFFFF', border: '1px solid #D6E0EE', borderRadius: 8, fontSize: 12 }} />
                   </PieChart>
                 </ResponsiveContainer>
               </div>

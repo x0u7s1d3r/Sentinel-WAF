@@ -61,7 +61,7 @@ export default function SiteDetail() {
           <span className="ring" style={attacked ? { animation: 'none' } : {}} />
           <svg viewBox="0 0 100 100" fill="none">
             <path d="M50 6 L86 20 V48 C86 72 70 88 50 96 C30 88 14 72 14 48 V20 Z"
-              fill={attacked ? '#E23D4310' : '#2F6FED10'}
+              fill={attacked ? '#E5484D10' : '#2C5CE010'}
               stroke={attacked ? 'var(--threat)' : 'var(--accent)'} strokeWidth="2.5" />
             {attacked ? (
               <path d="M50 30 V54 M50 66 v.5" stroke="var(--threat)" strokeWidth="5"
