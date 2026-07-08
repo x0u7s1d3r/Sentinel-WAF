@@ -363,7 +363,7 @@ func buildDiscordPayload(sev severity, count int, window, verdict, apps, cats, i
 	}
 	return map[string]any{
 		"embeds": []map[string]any{{
-			"title":     fmt.Sprintf("🛡️ Sentinel WAF — %d attaque(s) détectée(s)", count),
+			"title":     fmt.Sprintf("%s Sentinel WAF — Criticité %s — %d attaque(s)", sev.emoji, sev.label, count),
 			"color":     sev.discordColor,
 			"fields":    fields,
 			"footer":    map[string]any{"text": "Sentinel WAF"},
@@ -404,7 +404,7 @@ func buildSlackPayload(sev severity, count int, window, verdict, apps, cats, ips
 		"text": fallback,
 		"attachments": []map[string]any{{
 			"color":  sev.slackColor,
-			"title":  fmt.Sprintf("🛡️ Sentinel WAF — %d attaque(s) détectée(s)", count),
+			"title":  fmt.Sprintf("%s Sentinel WAF — Criticité %s — %d attaque(s)", sev.emoji, sev.label, count),
 			"fields": fields,
 			"footer": "Sentinel WAF",
 			"ts":     time.Now().Unix(),

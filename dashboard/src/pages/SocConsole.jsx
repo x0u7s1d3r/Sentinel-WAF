@@ -62,7 +62,7 @@ function fillSeries(series, stepMs) {
 
 export default function SocConsole() {
   const { stats, events, analytics, settings, refresh } = useOutletContext()
-  const [range, setRange] = useState('1h')
+  const [range, setRange] = useState('24h')
   const [local, setLocal] = useState(null)
 
   // Charge l'analytique pour la plage choisie (et rafraîchit en direct).
@@ -293,7 +293,9 @@ export default function SocConsole() {
               <span className="m">{e.method}</span>
               <span className="p">{e.path}</span>
               <span className="ip">{(e.categories || []).join(',') || e.client_ip}</span>
-              <span className="sc">{e.score || ''}</span>
+              {e.score > 0
+                ? <span className={`score-chip ${e.score >= 8 ? 'high' : e.score >= 4 ? 'mid' : 'low'}`} title="Score de dangerosité">{e.score}</span>
+                : <span className="sc" />}
             </div>
           ))}
         </div>

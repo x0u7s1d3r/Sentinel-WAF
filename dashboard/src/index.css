@@ -569,3 +569,21 @@ a { color: inherit; text-decoration: none; }
   .cmd-hero .st { justify-content: center; font-size: 34px; }
   .tiles { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* Score par événement (pastille colorée) */
+.score-chip {
+  font-family: var(--mono); font-size: 11px; font-weight: 600; min-width: 24px; text-align: center;
+  padding: 2px 6px; border-radius: 6px; justify-self: end;
+}
+.score-chip.high { color: var(--threat); background: #E5484D18; }
+.score-chip.mid  { color: var(--warn);   background: #E0920A18; }
+.score-chip.low  { color: var(--muted);  background: var(--panel-2); }
+
+/* Niveau de menace dans le hero */
+.threat-mi { min-width: 130px; }
+.threat-bar { display: block; width: 100%; height: 4px; border-radius: 3px; background: rgba(255,255,255,.14); margin-top: 6px; overflow: hidden; }
+.threat-bar i { display: block; height: 100%; border-radius: 3px; transition: width .5s ease; }
+.mv.threat-faible   { color: #3FE0A8; } .threat-bar i.threat-faible   { background: #3FE0A8; }
+.mv.threat-modéré   { color: #FFC15E; } .threat-bar i.threat-modéré   { background: #FFC15E; }
+.mv.threat-élevé    { color: #FF9F6B; } .threat-bar i.threat-élevé    { background: #FF9F6B; }
+.mv.threat-critique { color: #FF7A7F; } .threat-bar i.threat-critique { background: #FF7A7F; }

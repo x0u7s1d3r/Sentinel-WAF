@@ -539,7 +539,50 @@ func (s *Store) Analytics(app, rng string) (map[string]any, error) {
 		out["ai_analysis"] = ai
 	}
 
+	// 7) Score des attaques : moyenne et maximum sur la période, plus un
+	//    « niveau de menace » synthétique (0-100) combinant intensité et volume.
+	var avgScore, maxScore float64
+	var attackCount int64
+	_ = s.db.QueryRow(`
+		SELECT COALESCE(AVG(score),0), COALESCE(MAX(score),0), COUNT(*)
+		FROM events WHERE verdict IN ('blocked','detected')`+af+tf, args...).
+		Scan(&avgScore, &maxScore, &attackCount)
+
+	// Niveau de menace : le score moyen donne l'intensité (rapporté sur 100 en
+	// supposant un score « critique » autour de 10), pondéré à la hausse quand le
+	// volume d'attaques est important. Borné à 100.
+	threat := avgScore * 10
+	if attackCount > 20 {
+		threat += 15
+	} else if attackCount > 5 {
+		threat += 8
+	}
+	if threat > 100 {
+		threat = 100
+	}
+	level := "faible"
+	switch {
+	case threat >= 70:
+		level = "critique"
+	case threat >= 40:
+		level = "élevé"
+	case threat >= 15:
+		level = "modéré"
+	}
+	out["threat_score"] = map[string]any{
+		"avg":     round1(avgScore),
+		"max":     int(maxScore),
+		"attacks": attackCount,
+		"level":   level,
+		"gauge":   int(threat),
+	}
+
 	return out, nil
+}
+
+// round1 arrondit à une décimale.
+func round1(f float64) float64 {
+	return float64(int(f*10+0.5)) / 10
 }
 
 func splitComma(s string) []string {

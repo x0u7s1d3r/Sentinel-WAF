@@ -30,7 +30,7 @@ export default function App() {
       const [stats, eventsRes, appsRes, analytics, settings] = await Promise.all([
         api.stats(), api.events(),
         api.apps().catch(() => ({ apps: [] })),
-        api.analytics().catch(() => null),
+        api.analytics('24h').catch(() => null),
         api.settings().catch(() => null),
       ])
       setData({

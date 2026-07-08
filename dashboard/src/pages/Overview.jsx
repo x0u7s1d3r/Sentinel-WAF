@@ -50,6 +50,7 @@ export default function Overview() {
   }, [siteKey])
 
   const series = fillSeries(analytics?.timeseries)
+  const threat = analytics?.threat_score || null
   const total = stats?.total ?? 0
   const blocked = stats?.blocked ?? 0
   const detected = stats?.detected ?? 0
@@ -87,7 +88,7 @@ export default function Overview() {
             <span className="badge-live"><i />EN DIRECT</span>
           </div>
           <div className="sub">
-            Sentinel inspecte le trafic en temps réel. <b>{blocked} attaque{blocked > 1 ? 's' : ''}</b> bloquée{blocked > 1 ? 's' : ''} sur la dernière heure,
+            Sentinel inspecte le trafic en temps réel. <b>{blocked} attaque{blocked > 1 ? 's' : ''}</b> bloquée{blocked > 1 ? 's' : ''} sur les dernières 24 h,
             {detected > 0 ? ` ${detected} sous surveillance.` : ' aucune menace n\u2019a atteint vos applications.'}
           </div>
         </div>
@@ -95,6 +96,13 @@ export default function Overview() {
           <div className="mi"><span className="mv coral">{blocked}</span><span className="mk">Bloquées</span></div>
           <div className="mi"><span className="mv amber">{detected}</span><span className="mk">Surveillance</span></div>
           <div className="mi"><span className="mv">{sites.length}</span><span className="mk">Applications</span></div>
+          {threat && (
+            <div className="mi threat-mi">
+              <span className={`mv threat-${threat.level}`}>{threat.gauge}</span>
+              <span className="mk">Menace · {threat.level}</span>
+              <span className="threat-bar"><i className={`threat-${threat.level}`} style={{ width: `${threat.gauge}%` }} /></span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -107,7 +115,7 @@ export default function Overview() {
 
       <div className="soc-hero">
         <h3 style={{ margin: '0 0 10px', fontFamily: 'var(--display)', fontSize: 13 }}>
-          Trafic global — dernière heure
+          Trafic global — dernières 24 h
         </h3>
         <div style={{ height: 200 }}>
           {series.length === 0 ? (
