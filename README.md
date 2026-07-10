@@ -1,138 +1,158 @@
 # Sentinel WAF
 
-WAF applicatif open source, moderne et simple à déployer, pensé pour les PME.
-Détection par **analyse sémantique** (et non par simple regex), faibles faux
-positifs, architecture extensible par moteurs.
+**Pare-feu applicatif web (WAF) open source, moderne et simple à déployer, pensé pour les PME.**
 
-> État : **v0.1** — la passerelle (reverse proxy Go) est opérationnelle et
-> protège un backend via le moteur sémantique d'injection SQL. Voir la
-> [feuille de route](#feuille-de-route).
+Sentinel se place devant vos applications web comme un reverse-proxy et inspecte
+chaque requête en temps réel. Il détecte et bloque les attaques (injections,
+XSS, traversées de répertoire, scanners…), vous alerte, et enrichit chaque
+incident d'une **analyse en langage naturel** produite par une IA.
 
-## Pourquoi Sentinel
+Le tout se pilote depuis une **console web** : aucune ligne de commande n'est
+nécessaire pour l'exploitation quotidienne.
 
-- **Sémantique, pas regex.** Le moteur tokenise les entrées et raisonne sur
-  leur structure : il voit à travers l'obfuscation (`UN/**/ION`, casse, espaces)
-  et ne se déclenche pas sur une phrase anodine contenant « select » ou « or ».
-- **Simple.** Une commande pour démarrer, configuration minimale.
-- **Extensible.** Chaque protection est un moteur enfichable derrière une
-  interface unique.
+---
+
+## Fonctionnalités
+
+- **9 familles de détection** : injection SQL, XSS, traversée de répertoire,
+  injection de commande, SSRF, injection NoSQL, scanners offensifs, accès aux
+  chemins sensibles, force brute — par **analyse sémantique** (pas de simple
+  regex), pour peu de faux positifs.
+- **Multi-applications** : protégez plusieurs sites, chacun avec son domaine,
+  son mode (blocage ou surveillance) et son seuil.
+- **Console d'administration** : supervision temps réel, graphes, score de
+  menace, gestion des applications et de toute la configuration.
+- **Alertes Slack & Discord** : notifications enrichies (gravité, application
+  visée, analyse IA, mesures immédiates), configurables depuis la console.
+- **Enrichissement IA** : analyse des attaques via une API compatible OpenAI
+  (Groq, RodiumAI, OpenAI, Ollama…).
+- **Authentification** : accès à la console protégé par mot de passe.
+- **Rétention automatique** des événements, **survie au redémarrage**,
+  dégradation gracieuse (le WAF continue même si la base ou l'IA est indisponible).
+
+---
 
 ## Démarrage rapide
 
-### Sans Docker (développement)
+**Prérequis :** [Docker](https://docs.docker.com/engine/install/) et Docker
+Compose (inclus dans Docker Desktop, ou le paquet `docker-compose-plugin`).
 
 ```bash
-# 1. la passerelle
+git clone https://github.com/x0u7s1d3r/Sentinel-WAF.git
+cd Sentinel-WAF
+./start.sh
+```
+
+Le script vérifie les prérequis, crée le fichier de configuration, construit les
+images et démarre l'ensemble. À la fin, il affiche les adresses d'accès :
+
+- **Console d'administration** : <http://localhost:3000>
+- **Passerelle WAF (proxy)** : <http://localhost:8000>
+
+À la première visite de la console, **créez votre compte administrateur**, puis
+ajoutez vos applications à protéger depuis l'onglet **Applications**.
+
+> Sans Docker Compose v2 (`docker compose`), le script utilise automatiquement
+> `docker-compose` (v1) s'il est présent.
+
+---
+
+## Configuration
+
+Toute la configuration se fait de **deux façons**, au choix :
+
+1. **Depuis la console web** (recommandé) — alertes, IA, applications, compte…
+   tout est modifiable à chaud, sans redémarrage.
+2. **Via le fichier `.env`** — pratique pour un déploiement automatisé. Copié
+   depuis `.env.example` au premier lancement. Il contient des **secrets** et
+   n'est jamais versionné (présent dans `.gitignore`).
+
+Principales variables (toutes facultatives, valeurs par défaut sûres) :
+
+| Variable | Rôle |
+|---|---|
+| `SENTINEL_ADMIN_PASSWORD` | Mot de passe de la console (sinon défini au 1er lancement) |
+| `SENTINEL_HTTP_PORT` / `SENTINEL_DASHBOARD_PORT` | Ports d'accès (défaut 8000 / 3000) |
+| `SENTINEL_SLACK_WEBHOOK` / `SENTINEL_DISCORD_WEBHOOK` | Alertes (aussi configurables via la console) |
+| `LLM_ENABLED` / `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` | Enrichissement IA |
+| `SENTINEL_RETENTION_DAYS` / `SENTINEL_RETENTION_MAX` | Rétention des événements |
+| `POSTGRES_PASSWORD` | Mot de passe de la base (interne) |
+
+---
+
+## Ajouter une application à protéger
+
+1. Déployez votre application (ou pointez vers une application existante).
+2. Dans la console → **Applications** → **Ajouter** :
+   - **Nom** : un libellé lisible.
+   - **Domaine** : l'en-tête `Host` du trafic à router (ex. `boutique.exemple.tg`).
+   - **Backend** : l'URL interne de votre application (ex. `http://mon-app:80`).
+   - **Mode** : *Blocage* (arrête les attaques) ou *Surveillance* (détecte sans bloquer).
+3. Faites pointer ce domaine vers la passerelle Sentinel (DNS, ou `/etc/hosts`
+   en test). Le trafic est désormais inspecté.
+
+---
+
+## Architecture
+
+- **Passerelle** (Go) : reverse-proxy inspectant le trafic. Compilée, concurrente,
+  latence de l'ordre de la microseconde.
+- **Console** (React) : plan de contrôle, séparé du plan de données.
+- **PostgreSQL** : persistance des événements et de la configuration.
+
+Le trafic Internet traverse la passerelle (qui l'inspecte via ses moteurs de
+détection) avant d'atteindre vos applications. Les événements et la configuration
+sont stockés dans PostgreSQL, et la console web lit/écrit cette configuration.
+
+---
+
+## Dépannage
+
+**La console ne se met pas à jour après une modification.**
+Videz le cache du navigateur (Ctrl+Maj+R) ou utilisez une fenêtre de navigation
+privée.
+
+**Sur une machine virtuelle : « cannot stop container: permission denied ».**
+Certaines VM avec Docker installé via *snap* subissent un blocage AppArmor.
+Correctif :
+
+```bash
+sudo systemctl edit docker
+# Ajoutez ces deux lignes puis enregistrez :
+#   [Service]
+#   AppArmorProfile=
+sudo systemctl restart docker
+```
+
+**Voir les journaux :**
+
+```bash
+docker compose logs -f gateway     # ou : docker-compose logs -f gateway
+```
+
+**Arrêter / redémarrer :**
+
+```bash
+docker compose down                # arrêter
+./start.sh                         # redémarrer
+```
+
+---
+
+## Développement
+
+Environnement de test avec application volontairement vulnérable (dossier
+`attack-lab/`) pour éprouver la détection.
+
+Compilation manuelle de la passerelle (sans Docker) :
+
+```bash
 go build -o gateway ./cmd/gateway
-./gateway -config configs/config.json      # écoute sur :8080
-
-# 2. pointer "upstream" (configs/config.json) vers l'appli à protéger
+./gateway -config configs/config.json
 ```
 
-### Avec Docker
-
-```bash
-docker compose up -d --build
-# passerelle : http://localhost:8080  (protège le service demo-target)
-```
-
-## Vérifier que ça marche
-
-```bash
-# supervision
-curl http://localhost:8080/_sentinel/health
-curl http://localhost:8080/_sentinel/stats
-
-# requête légitime -> transmise
-curl "http://localhost:8080/?q=hello"
-
-# injection SQL obfusquée -> bloquée (403)
-curl "http://localhost:8080/?id=1%20UNION/**/SELECT%20a,b%20FROM%20users"
-
-# contournement d'authentification -> bloqué (403)
-curl "http://localhost:8080/login?user=admin%27--"
-
-# phrase anodine contenant des mots SQL -> passe (pas de faux positif)
-curl "http://localhost:8080/?q=please%20select%20a%20red%20or%20blue%20shirt"
-```
-
-## Configuration (`configs/config.json`)
-
-```json
-{
-  "listen": ":8080",
-  "upstream": "http://127.0.0.1:8000",
-  "mode": "block",
-  "threshold": 4
-}
-```
-
-- `mode` : `block` (bloque) ou `detect` (journalise seulement).
-- `threshold` : score cumulé à partir duquel une requête est bloquée.
-
-## Structure du dépôt
-
-```
-sentinel-waf/
-├── cmd/gateway/        binaire de la passerelle
-├── internal/
-│   ├── proxy/          reverse proxy + pipeline WAF
-│   ├── parser/         normalisation HTTP
-│   ├── detector/       moteurs de détection (sémantique SQL, chaîne)
-│   └── config/         configuration
-├── configs/            fichiers de configuration
-├── docker/             Dockerfile
-├── docs/               ARCHITECTURE.md
-├── web/                dashboard (à venir)
-└── docker-compose.yml
-```
-
-## Tests
-
-```bash
-go test ./...        # inclut la batterie du moteur sémantique SQL
-```
-
-## Alertes Slack (facultatif)
-
-Sentinel peut envoyer une alerte Slack agrégée dès qu'une attaque est bloquée
-ou détectée. Chaque utilisateur configure **son propre** webhook — aucun secret
-n'est stocké dans le code.
-
-1. Créez un *Incoming Webhook* sur https://api.slack.com/apps (New App → From
-   scratch → Incoming Webhooks → Add New Webhook to Workspace), et choisissez le
-   canal de destination.
-2. Copiez le modèle et renseignez votre webhook :
-   ```bash
-   cp .env.example .env
-   # éditez .env et collez votre URL dans SENTINEL_SLACK_WEBHOOK
-   ```
-3. Lancez (Docker lit automatiquement le fichier `.env`) :
-   ```bash
-   docker compose up -d
-   ```
-
-Le fichier `.env` est ignoré par git : votre webhook ne part jamais sur GitHub.
-Sans webhook configuré, le WAF fonctionne normalement, sans alertes. Les alertes
-sont **agrégées** (fenêtre réglable via `SENTINEL_ALERT_INTERVAL_SEC`) pour qu'un
-scanner ne génère pas des centaines de messages.
-
-## Feuille de route
-
-| Version | Contenu | État |
-|---------|---------|------|
-| v0.1 | Passerelle Go, moteur sémantique SQL, supervision | ✅ |
-| v0.2 | XSS sémantique + heuristiques (traversée, cmd, SSRF, NoSQL, scanner) | ✅ |
-| v0.3 | Persistance PostgreSQL des événements | ✅ |
-| v0.4 | Routage multi-application (par domaine, politique par appli) | ✅ |
-| v0.5 | Alertes Slack agrégées | ✅ |
-| v0.6 | Dashboard React (accueil PME + onglet technique) | 🔜 |
-| v0.7 | Cible vulnérable de démonstration | 🔜 |
-| v0.8 | Mode apprentissage + Redis (rate limiting) | 🔜 |
-| v0.9 | Intégration SOAR (Shuffle / TheHive / Elastic) | 🔜 |
-
-Voir [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) pour le détail.
+---
 
 ## Licence
 
-À définir (MIT recommandée pour un projet open source destiné aux PME).
+MIT — voir [LICENSE](LICENSE).

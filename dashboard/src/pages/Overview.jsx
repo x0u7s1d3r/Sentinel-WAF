@@ -9,16 +9,10 @@ const hhmm = (t) => (t || '').slice(11, 16)
 
 function fillSeries(series) {
   if (!series || series.length === 0) return []
-  const byT = new Map(series.map((p) => [p.t, p]))
-  const bucket = (ms) => new Date(ms).toISOString().slice(0, 16) + ':00Z'
-  const first = new Date(series[0].t).getTime()
-  const last = new Date(series[series.length - 1].t).getTime()
-  const out = []
-  for (let m = first; m <= last; m += 60000) {
-    const key = bucket(m)
-    out.push(byT.get(key) || { t: key, total: 0, blocked: 0, detected: 0, allowed: 0 })
-  }
-  return out.slice(-60)
+  // Le backend renvoie déjà des points agrégés à la bonne granularité selon la
+  // plage (1 min pour 1h, 15 min pour 24h, etc.). On les utilise tels quels,
+  // triés par temps, sans imposer de fenêtre fixe ni de pas d'une minute.
+  return [...series].sort((a, b) => new Date(a.t) - new Date(b.t))
 }
 
 export default function Overview() {

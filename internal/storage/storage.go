@@ -449,30 +449,71 @@ func (s *Store) Analytics(app, rng string) (map[string]any, error) {
 	out["range"] = rng
 
 	// 1) Série temporelle : trafic agrégé par tranche (bucket) adaptée à la plage.
-	//    On regroupe par tranche epoch pour un pas de temps arbitraire.
-	tsQuery := fmt.Sprintf(`
-		SELECT to_char(to_timestamp(floor(extract(epoch from ts)/%d)*%d) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:00"Z"'),
-		       COUNT(*),
-		       COUNT(*) FILTER (WHERE verdict='blocked'),
-		       COUNT(*) FILTER (WHERE verdict='detected'),
-		       COUNT(*) FILTER (WHERE verdict='allowed')
-		FROM events
-		WHERE 1=1%s%s
-		GROUP BY 1 ORDER BY 1`, bucketSec, bucketSec, af, tf)
-	if rows, err := s.db.Query(tsQuery, args...); err == nil {
-		var series []map[string]any
-		for rows.Next() {
-			var b string
-			var total, blocked, detected, allowed int64
-			if rows.Scan(&b, &total, &blocked, &detected, &allowed) == nil {
-				series = append(series, map[string]any{
-					"t": b, "total": total, "blocked": blocked,
-					"detected": detected, "allowed": allowed,
-				})
+	//    On génère une série CONTINUE sur toute la fenêtre (tranches vides à 0)
+	//    pour un graphe correct, sauf pour "all" (pas de borne de départ fixe).
+	if windowSec > 0 {
+		tsQuery := fmt.Sprintf(`
+			WITH bounds AS (
+			  SELECT floor(extract(epoch from now())/%d)*%d AS b_end,
+			         floor(extract(epoch from now() - interval '%d seconds')/%d)*%d AS b_start
+			),
+			buckets AS (
+			  SELECT generate_series(b_start, b_end, %d) AS ep FROM bounds
+			),
+			agg AS (
+			  SELECT floor(extract(epoch from ts)/%d)*%d AS ep,
+			         COUNT(*) t,
+			         COUNT(*) FILTER (WHERE verdict='blocked') b,
+			         COUNT(*) FILTER (WHERE verdict='detected') d,
+			         COUNT(*) FILTER (WHERE verdict='allowed') a
+			  FROM events WHERE 1=1%s%s GROUP BY 1
+			)
+			SELECT to_char(to_timestamp(bk.ep) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:00"Z"'),
+			       COALESCE(ag.t,0), COALESCE(ag.b,0), COALESCE(ag.d,0), COALESCE(ag.a,0)
+			FROM buckets bk LEFT JOIN agg ag ON ag.ep = bk.ep
+			ORDER BY bk.ep`,
+			bucketSec, bucketSec, windowSec, bucketSec, bucketSec, bucketSec,
+			bucketSec, bucketSec, af, tf)
+		if rows, err := s.db.Query(tsQuery, args...); err == nil {
+			var series []map[string]any
+			for rows.Next() {
+				var b string
+				var total, blocked, detected, allowed int64
+				if rows.Scan(&b, &total, &blocked, &detected, &allowed) == nil {
+					series = append(series, map[string]any{
+						"t": b, "total": total, "blocked": blocked,
+						"detected": detected, "allowed": allowed,
+					})
+				}
 			}
+			rows.Close()
+			out["timeseries"] = series
 		}
-		rows.Close()
-		out["timeseries"] = series
+	} else {
+		// "all" : série éparse (regroupement simple, sans borne de départ).
+		tsQuery := fmt.Sprintf(`
+			SELECT to_char(to_timestamp(floor(extract(epoch from ts)/%d)*%d) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:00"Z"'),
+			       COUNT(*),
+			       COUNT(*) FILTER (WHERE verdict='blocked'),
+			       COUNT(*) FILTER (WHERE verdict='detected'),
+			       COUNT(*) FILTER (WHERE verdict='allowed')
+			FROM events WHERE 1=1%s%s
+			GROUP BY 1 ORDER BY 1`, bucketSec, bucketSec, af, tf)
+		if rows, err := s.db.Query(tsQuery, args...); err == nil {
+			var series []map[string]any
+			for rows.Next() {
+				var b string
+				var total, blocked, detected, allowed int64
+				if rows.Scan(&b, &total, &blocked, &detected, &allowed) == nil {
+					series = append(series, map[string]any{
+						"t": b, "total": total, "blocked": blocked,
+						"detected": detected, "allowed": allowed,
+					})
+				}
+			}
+			rows.Close()
+			out["timeseries"] = series
+		}
 	}
 
 	// 2) Répartition par catégorie (sur la période).
