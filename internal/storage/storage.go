@@ -80,6 +80,21 @@ CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value JSONB NOT NULL
 );
+CREATE TABLE IF NOT EXISTS incidents (
+    id         BIGSERIAL PRIMARY KEY,
+    ts         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    win_label  TEXT NOT NULL DEFAULT '',
+    severity   TEXT NOT NULL DEFAULT '',
+    count      INTEGER NOT NULL DEFAULT 0,
+    blocked    INTEGER NOT NULL DEFAULT 0,
+    detected   INTEGER NOT NULL DEFAULT 0,
+    apps       TEXT NOT NULL DEFAULT '',
+    categories TEXT NOT NULL DEFAULT '',
+    top_ips    TEXT NOT NULL DEFAULT '',
+    top_paths  TEXT NOT NULL DEFAULT '',
+    analysis   TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_incidents_ts ON incidents (ts DESC);
 `
 
 // Open établit la connexion, vérifie qu'elle répond et applique le schéma.
@@ -375,6 +390,63 @@ func (s *Store) UpdateApp(id int64, name, domain, upstream, mode string, thresho
 		 WHERE id = $1`,
 		id, name, domain, upstream, mode, threshold)
 	return err
+}
+
+// Incident représente un épisode d'attaques ayant déclenché une alerte.
+type Incident struct {
+	ID         int64     `json:"id"`
+	TS         time.Time `json:"ts"`
+	Window     string    `json:"window"`
+	Severity   string    `json:"severity"`
+	Count      int       `json:"count"`
+	Blocked    int       `json:"blocked"`
+	Detected   int       `json:"detected"`
+	Apps       string    `json:"apps"`
+	Categories string    `json:"categories"`
+	TopIPs     string    `json:"top_ips"`
+	TopPaths   string    `json:"top_paths"`
+	Analysis   string    `json:"analysis"`
+}
+
+// SaveIncident enregistre un incident dans l'historique.
+func (s *Store) SaveIncident(in Incident) error {
+	if s == nil {
+		return nil
+	}
+	_, err := s.db.Exec(`
+		INSERT INTO incidents (win_label, severity, count, blocked, detected, apps, categories, top_ips, top_paths, analysis)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+		in.Window, in.Severity, in.Count, in.Blocked, in.Detected,
+		in.Apps, in.Categories, in.TopIPs, in.TopPaths, in.Analysis)
+	return err
+}
+
+// ListIncidents renvoie les incidents les plus récents (limite bornée).
+func (s *Store) ListIncidents(limit int) ([]Incident, error) {
+	if s == nil {
+		return nil, nil
+	}
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := s.db.Query(`
+		SELECT id, ts, win_label, severity, count, blocked, detected, apps, categories, top_ips, top_paths, analysis
+		FROM incidents ORDER BY ts DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Incident
+	for rows.Next() {
+		var in Incident
+		if err := rows.Scan(&in.ID, &in.TS, &in.Window, &in.Severity, &in.Count,
+			&in.Blocked, &in.Detected, &in.Apps, &in.Categories, &in.TopIPs,
+			&in.TopPaths, &in.Analysis); err != nil {
+			return nil, err
+		}
+		out = append(out, in)
+	}
+	return out, nil
 }
 
 // SaveSetting persiste une valeur de configuration (sérialisée en JSON).

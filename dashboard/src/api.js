@@ -39,6 +39,7 @@ export const api = {
   stats: () => get('/stats'),
   events: () => get('/events'),
   analytics: (range) => get('/analytics' + (range ? `?range=${encodeURIComponent(range)}` : '')),
+  incidents: () => get('/incidents'),
   apps: () => get('/apps'),
   settings: () => get('/settings'),
   setSettings: (body) => post('/settings', body),

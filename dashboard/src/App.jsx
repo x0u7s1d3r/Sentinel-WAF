@@ -77,6 +77,7 @@ export default function App() {
         <nav className="nav">
           <NavLink to="/" end>Vue d'ensemble</NavLink>
           <NavLink to="/supervision">Supervision</NavLink>
+          <NavLink to="/alertes">Alertes</NavLink>
           <NavLink to="/applications">Applications</NavLink>
           <NavLink to="/parametres">Paramètres</NavLink>
         </nav>

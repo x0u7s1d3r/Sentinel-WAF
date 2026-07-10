@@ -131,6 +131,17 @@ func main() {
 		}
 	}
 	notif.SetEnricher(analyze, save)
+	notif.SetIncidentSink(func(in notifier.IncidentData) {
+		if store == nil {
+			return
+		}
+		_ = store.SaveIncident(storage.Incident{
+			Window: in.Window, Severity: in.Severity, Count: in.Count,
+			Blocked: in.Blocked, Detected: in.Detected, Apps: in.Apps,
+			Categories: in.Categories, TopIPs: in.TopIPs, TopPaths: in.TopPaths,
+			Analysis: in.Analysis,
+		})
+	})
 
 	// Routeur multi-application : chargé depuis la base, rechargé à chaud.
 	router := proxy.NewRouter()
@@ -286,6 +297,19 @@ func main() {
 			return
 		}
 		writeJSON(w, map[string]any{"events": events})
+	})
+
+	mux.HandleFunc("/_sentinel/incidents", func(w http.ResponseWriter, r *http.Request) {
+		if store == nil {
+			writeJSON(w, map[string]any{"incidents": []any{}, "persistence": false})
+			return
+		}
+		incidents, err := store.ListIncidents(100)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]any{"incidents": incidents})
 	})
 
 	mux.HandleFunc("/_sentinel/analytics", func(w http.ResponseWriter, r *http.Request) {

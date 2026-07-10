@@ -48,6 +48,17 @@ type AnalyzeFunc func(count, blocked, detected int, window, apps, cats, ips, pat
 // SaveAnalysisFunc persiste la dernière analyse (pour l'afficher au dashboard).
 type SaveAnalysisFunc func(text string)
 
+// IncidentData décrit un épisode d'attaques à historiser.
+type IncidentData struct {
+	Window, Severity                   string
+	Count, Blocked, Detected           int
+	Apps, Categories, TopIPs, TopPaths string
+	Analysis                           string
+}
+
+// SaveIncidentFunc persiste un incident dans l'historique (centre d'alertes).
+type SaveIncidentFunc func(IncidentData)
+
 type Notifier struct {
 	mu           sync.RWMutex
 	slackURL     string
@@ -59,6 +70,7 @@ type Notifier struct {
 	client       *http.Client
 	analyze      AnalyzeFunc
 	saveAnalysis SaveAnalysisFunc
+	saveIncident SaveIncidentFunc
 }
 
 // SetEnricher branche l'analyse IA (appelée en arrière-plan, hors trafic).
@@ -69,6 +81,16 @@ func (n *Notifier) SetEnricher(analyze AnalyzeFunc, save SaveAnalysisFunc) {
 	n.mu.Lock()
 	n.analyze = analyze
 	n.saveAnalysis = save
+	n.mu.Unlock()
+}
+
+// SetIncidentSink branche la persistance des incidents (historique d'alertes).
+func (n *Notifier) SetIncidentSink(save SaveIncidentFunc) {
+	if n == nil {
+		return
+	}
+	n.mu.Lock()
+	n.saveIncident = save
 	n.mu.Unlock()
 }
 
@@ -231,9 +253,6 @@ func (n *Notifier) worker() {
 func (n *Notifier) flush(alerts []Alert) {
 	slackURL := n.urlFor(KindSlack)
 	discordURL := n.urlFor(KindDiscord)
-	if slackURL == "" && discordURL == "" {
-		return // aucune destination : on abandonne silencieusement le lot
-	}
 
 	blocked, detected := 0, 0
 	byCat := map[string]int{}
@@ -271,7 +290,7 @@ func (n *Notifier) flush(alerts []Alert) {
 	// En cas d'absence/erreur/lenteur, on continue sans analyse.
 	analysis := ""
 	n.mu.RLock()
-	analyze, saveAnalysis := n.analyze, n.saveAnalysis
+	analyze, saveAnalysis, saveIncident := n.analyze, n.saveAnalysis, n.saveIncident
 	n.mu.RUnlock()
 	if analyze != nil {
 		if txt, err := analyze(len(alerts), blocked, detected, window, apps, cats, ips, paths); err != nil {
@@ -282,6 +301,20 @@ func (n *Notifier) flush(alerts []Alert) {
 				saveAnalysis(txt)
 			}
 		}
+	}
+
+	// Historisation de l'incident (centre d'alertes), indépendamment des webhooks.
+	if saveIncident != nil {
+		saveIncident(IncidentData{
+			Window: window, Severity: sev.label, Count: len(alerts),
+			Blocked: blocked, Detected: detected, Apps: apps, Categories: cats,
+			TopIPs: ips, TopPaths: paths, Analysis: analysis,
+		})
+	}
+
+	// Envoi vers les plateformes configurées (le cas échéant).
+	if slackURL == "" && discordURL == "" {
+		return
 	}
 
 	// Repli texte (utilisé si la plateforme ignore le format riche).

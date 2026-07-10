@@ -587,3 +587,41 @@ a { color: inherit; text-decoration: none; }
 .mv.threat-modéré   { color: #FFC15E; } .threat-bar i.threat-modéré   { background: #FFC15E; }
 .mv.threat-élevé    { color: #FF9F6B; } .threat-bar i.threat-élevé    { background: #FF9F6B; }
 .mv.threat-critique { color: #FF7A7F; } .threat-bar i.threat-critique { background: #FF7A7F; }
+
+/* ===== Centre d'alertes (SOC) ===== */
+.alerts-list { display: flex; flex-direction: column; gap: 10px; padding: 12px; }
+.alert-card { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--panel); transition: box-shadow .15s, border-color .15s; }
+.alert-card:hover { box-shadow: var(--shadow); }
+.alert-card.open { box-shadow: var(--shadow-hi); border-color: var(--border-hi); }
+.alert-card.high { border-left: 3px solid var(--threat); }
+.alert-card.mid  { border-left: 3px solid var(--warn); }
+.alert-card.low  { border-left: 3px solid #EAB308; }
+.alert-head { width: 100%; display: grid; grid-template-columns: auto 1.6fr 1.2fr auto auto; align-items: center; gap: 14px;
+  padding: 13px 16px; background: none; border: none; cursor: pointer; font: inherit; text-align: left; color: var(--text); }
+.alert-head:hover { background: var(--panel-2); }
+.sev-badge { font-size: 12px; font-weight: 700; padding: 3px 9px; border-radius: 999px; white-space: nowrap; }
+.sev-badge.high { color: var(--threat); background: #E5484D14; }
+.sev-badge.mid  { color: #B8720A; background: #E0920A14; }
+.sev-badge.low  { color: #9A7B0A; background: #EAB30818; }
+.alert-title { font-weight: 600; font-size: 13.5px; }
+.alert-apps { font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.alert-time { font-family: var(--mono); font-size: 11.5px; color: var(--faint); white-space: nowrap; }
+.alert-chevron { color: var(--faint); font-size: 12px; }
+.alert-body { padding: 4px 18px 18px; border-top: 1px solid var(--border); background: var(--panel-2); }
+.alert-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 24px; padding: 16px 0; }
+.ab-field { display: flex; flex-direction: column; gap: 3px; }
+.ab-k { font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--faint); font-weight: 600; }
+.ab-v { font-size: 13px; color: var(--text); }
+.ab-v.mono { font-family: var(--mono); font-size: 12px; }
+.ai-block { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-top: 4px; }
+.ai-title { font-family: var(--display); font-weight: 600; font-size: 13.5px; color: var(--accent); margin-bottom: 8px; }
+.ai-diag { font-size: 13px; line-height: 1.55; margin: 0 0 10px; color: var(--text); }
+.ai-sub { font-weight: 600; font-size: 12.5px; color: var(--safe); margin-bottom: 6px; }
+.ai-measures { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.ai-measures li { font-size: 12.5px; line-height: 1.5; color: var(--text); }
+.empty-ai { color: var(--muted); font-size: 12.5px; }
+@media (max-width: 720px) {
+  .alert-head { grid-template-columns: auto 1fr auto; }
+  .alert-apps { display: none; }
+  .alert-grid { grid-template-columns: 1fr; }
+}
