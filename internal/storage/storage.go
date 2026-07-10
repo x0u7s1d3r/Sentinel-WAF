@@ -272,6 +272,70 @@ func (s *Store) Recent(limit int, app string) ([]Event, error) {
 	return out, rows.Err()
 }
 
+// TimelineByIP reconstitue la session d'une IP : ses requêtes dans l'ordre
+// chronologique, plus un résumé (première/dernière vue, totaux, catégories).
+func (s *Store) TimelineByIP(ip string, limit int) (map[string]any, error) {
+	if s == nil {
+		return nil, nil
+	}
+	if limit <= 0 || limit > 1000 {
+		limit = 300
+	}
+	rows, err := s.db.Query(`
+		SELECT id, ts, app, client_ip, method, path, verdict, score, categories, latency_us
+		FROM events WHERE client_ip = $1
+		ORDER BY id ASC LIMIT `+itoaLimit(limit), ip)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var events []Event
+	byCat := map[string]int{}
+	byApp := map[string]int{}
+	blocked, detected, allowed, maxScore := 0, 0, 0, 0
+	for rows.Next() {
+		var e Event
+		var cats string
+		if err := rows.Scan(&e.ID, &e.TS, &e.App, &e.ClientIP, &e.Method, &e.Path,
+			&e.Verdict, &e.Score, &cats, &e.LatencyUS); err != nil {
+			return nil, err
+		}
+		if cats != "" {
+			e.Categories = splitComma(cats)
+			for _, c := range e.Categories {
+				byCat[c]++
+			}
+		}
+		switch e.Verdict {
+		case "blocked":
+			blocked++
+		case "detected":
+			detected++
+		default:
+			allowed++
+		}
+		if e.Score > maxScore {
+			maxScore = e.Score
+		}
+		if e.App != "" {
+			byApp[e.App]++
+		}
+		events = append(events, e)
+	}
+
+	summary := map[string]any{
+		"ip": ip, "total": len(events),
+		"blocked": blocked, "detected": detected, "allowed": allowed,
+		"max_score": maxScore, "categories": byCat, "apps": byApp,
+	}
+	if len(events) > 0 {
+		summary["first_seen"] = events[0].TS
+		summary["last_seen"] = events[len(events)-1].TS
+	}
+	return map[string]any{"summary": summary, "events": events}, rows.Err()
+}
+
 func itoaLimit(n int) string {
 	digits := ""
 	if n == 0 {

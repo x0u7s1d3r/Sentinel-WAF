@@ -4,6 +4,7 @@ import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
 } from 'recharts'
 import { api } from '../api.js'
+import { generateReport } from '../report.js'
 
 const hhmm = (t) => (t || '').slice(11, 16)
 
@@ -18,6 +19,12 @@ function fillSeries(series) {
 export default function Overview() {
   const { stats, analytics, apps, events, settings } = useOutletContext()
   const [siteStats, setSiteStats] = useState({})
+  const [reporting, setReporting] = useState(false)
+
+  async function downloadReport() {
+    setReporting(true)
+    try { await generateReport('24h') } catch (e) { console.error(e) } finally { setReporting(false) }
+  }
 
   // Liste des sites : applications enregistrées + le trafic « par défaut »
   // (requêtes sans domaine routé) s'il y en a.
@@ -85,6 +92,9 @@ export default function Overview() {
             Sentinel inspecte le trafic en temps réel. <b>{blocked} attaque{blocked > 1 ? 's' : ''}</b> bloquée{blocked > 1 ? 's' : ''} sur les dernières 24 h,
             {detected > 0 ? ` ${detected} sous surveillance.` : ' aucune menace n\u2019a atteint vos applications.'}
           </div>
+          <button className="hero-report" onClick={downloadReport} disabled={reporting}>
+            {reporting ? '⏳ Génération…' : '📄 Télécharger le rapport de sécurité'}
+          </button>
         </div>
         <div className="mini">
           <div className="mi"><span className="mv coral">{blocked}</span><span className="mk">Bloquées</span></div>

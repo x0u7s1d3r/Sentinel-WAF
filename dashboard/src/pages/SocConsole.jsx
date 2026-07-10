@@ -5,6 +5,7 @@ import {
   PieChart, Pie, Cell,
 } from 'recharts'
 import { api, CATEGORIES } from '../api.js'
+import TimelineDrawer from '../components/TimelineDrawer.jsx'
 
 // Plages de temps proposées et leur pas d'agrégation (ms) côté affichage.
 const RANGES = [
@@ -64,6 +65,7 @@ export default function SocConsole() {
   const { stats, events, analytics, settings, refresh } = useOutletContext()
   const [range, setRange] = useState('24h')
   const [local, setLocal] = useState(null)
+  const [tlIp, setTlIp] = useState(null)
 
   // Charge l'analytique pour la plage choisie (et rafraîchit en direct).
   useEffect(() => {
@@ -250,7 +252,7 @@ export default function SocConsole() {
             <div className="toplist">
               {topIps.map((x) => (
                 <div className="toprow threat ban" key={x.ip}>
-                  <span className="lbl">{x.ip}</span>
+                  <button className="lbl lbl-link" onClick={() => setTlIp(x.ip)} title="Voir la chronologie de cette IP">{x.ip}</button>
                   <span className="val">
                     {x.attacks || x.total} att.
                     {blocked.has(x.ip)
@@ -300,6 +302,8 @@ export default function SocConsole() {
           ))}
         </div>
       </div>
+
+      <TimelineDrawer ip={tlIp} onClose={() => setTlIp(null)} />
     </div>
   )
 }

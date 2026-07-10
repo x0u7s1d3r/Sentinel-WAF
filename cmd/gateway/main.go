@@ -312,6 +312,24 @@ func main() {
 		writeJSON(w, map[string]any{"incidents": incidents})
 	})
 
+	mux.HandleFunc("/_sentinel/timeline", func(w http.ResponseWriter, r *http.Request) {
+		if store == nil {
+			writeJSON(w, map[string]any{"events": []any{}, "persistence": false})
+			return
+		}
+		ip := r.URL.Query().Get("ip")
+		if ip == "" {
+			http.Error(w, "paramètre ip requis", http.StatusBadRequest)
+			return
+		}
+		tl, err := store.TimelineByIP(ip, 300)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, tl)
+	})
+
 	mux.HandleFunc("/_sentinel/analytics", func(w http.ResponseWriter, r *http.Request) {
 		if store == nil {
 			writeJSON(w, map[string]any{"persistence": false})
